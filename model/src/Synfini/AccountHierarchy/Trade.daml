@@ -1,0 +1,187 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+module Synfini.AccountHierarchy.Trade where
+
+import DA.Assert ((===))
+import DA.Finance.Asset
+import DA.Finance.Asset.Settlement
+import DA.Finance.Trade.Dvp
+import DA.Finance.Trade.Dvp.Settlement
+import DA.Finance.Trade.SettlementInstruction
+import DA.Finance.Types
+import qualified DA.Foldable as F
+import DA.List
+import qualified DA.Optional as O
+import qualified DA.Set as Set
+import qualified DA.Traversable as T
+import Synfini.AccountHierarchy.Allocation
+import Synfini.AccountHierarchy.Service
+
+template CustodialDvp
+  with
+   dvp : Dvp
+   beneficiary1 : Party
+   beneficiary2 : Party
+  where
+    signatory signatory dvp
+    observer observer dvp, beneficiary1, beneficiary2
+    ensure ensure dvp
+
+    key key dvp : (Id, Id)
+    maintainer maintainer @Dvp key
+
+data CustodialTransfer = CustodialTransfer
+  with
+    allocationChangeCid : ContractId AllocationChangeInstruction -- ^ De-allocate assets from the account held with the
+    -- first custodian, and allocate the asset to the account held with the second custodian.
+    settlementCid : Optional (ContractId SettlementInstruction) -- ^ Transfer the asset from the first custodian to the second custodian.
+    -- Will be `None` if the first and second custodians are the same.
+  deriving (Show, Eq)
+
+data CustodialDvpSettlement_Process_Result = CustodialDvpSettlement_Process_Result
+  with
+    custodialDvpCid : ContractId CustodialDvp
+      -- ^ Settled Dvp trade
+    paymentDepositCids : [[ContractId AssetDeposit]]
+      -- ^ Transferred asset deposits for each payment obligation
+    deliveryDepositCids : [[ContractId AssetDeposit]]
+      -- ^ Transferred asset deposits for each delivery obligation
+  deriving (Eq, Show)
+
+template CustodialDvpSettlementRule
+  with
+    masterAgreement : MasterAgreement
+  where
+    signatory masterAgreement.id.signatories
+    observer masterAgreement.party1, masterAgreement.party2
+
+    key masterAgreement.id : Id
+    maintainer key.signatories
+
+    nonconsuming choice CustodialDvpSettlementRule_Process : CustodialDvpSettlement_Process_Result
+      with
+        custodialDvpCid : ContractId CustodialDvp
+          -- ^ Dvp trade to be settled
+        paymentInstructionCids : [CustodialTransfer]
+          -- ^ Fully allocated settlement instruction for each payment asset.
+        deliveryInstructionCids : [CustodialTransfer]
+          -- ^ Fully allocated settlement instruction for each delivery asset.
+        ctrl : Party
+          -- ^ masterAgreement.party1 or masterAgreement.party2
+      controller ctrl -- should the beneficiaries be able to act as the controller here?
+      do
+        assert (ctrl == masterAgreement.party1 || ctrl == masterAgreement.party2)
+        custodialDvp <- fetch custodialDvpCid
+        custodialDvp.dvp.masterAgreement === masterAgreement
+
+        paymentInstructionContracts <- mapA fetchCustodialTransfer paymentInstructionCids
+        deliveryInstructionContracts <- mapA fetchCustodialTransfer deliveryInstructionCids
+
+        -- Execute dvp between the legal owners
+        dvpCid <- create custodialDvp.dvp
+        dvpSettlementRuleCid <- create DvpSettlementRule with masterAgreement
+        now <- getTime
+        let dummyAccountId  = Id with
+              signatories = Set.singleton masterAgreement.party1
+              label = show masterAgreement.id <> ":" <> custodialDvp.dvp.tradeId.label <> ":" <> show now
+              version = custodialDvp.dvp.tradeId.version
+        let dummyAccount = Account with owner = masterAgreement.party1, provider = masterAgreement.party1, id = dummyAccountId
+        dummySettlementRuleCid  <- create AssetSettlementRule with
+          account = dummyAccount
+          ctrls = Set.singleton masterAgreement.party1
+          observers = Set.empty
+        paymentSettlementCids <- createDummySettlementInstructions dummyAccount masterAgreement custodialDvp.dvp.tradeId paymentInstructionCids
+        deliverySettlementCids <- createDummySettlementInstructions dummyAccount masterAgreement custodialDvp.dvp.tradeId deliveryInstructionCids
+        dvpResult <- exercise dvpSettlementRuleCid DvpSettlement_Process with
+          dvpCid
+          paymentInstructionCids = paymentSettlementCids
+          deliveryInstructionCids = deliverySettlementCids
+          ctrl
+        archive dvpSettlementRuleCid
+        newDvp <- fetch dvpResult.dvpCid
+        archive custodialDvpCid
+        create custodialDvp with dvp = newDvp
+        archive dvpResult.dvpCid
+        archive dummySettlementRuleCid
+        dvpPaymentDepositCids <- archiveDummyAssetDeposits paymentInstructionCids dvpResult.paymentDepositCids
+        dvpDeliveryDepositCids <- archiveDummyAssetDeposits deliveryInstructionCids dvpResult.deliveryDepositCids
+
+        -- Perform allocation changes
+        let (seller, buyer)
+              | custodialDvp.dvp.buyer == masterAgreement.party1 =
+                ((custodialDvp.beneficiary2, masterAgreement.party2), (custodialDvp.beneficiary1, masterAgreement.party1))
+              | otherwise =
+                ((custodialDvp.beneficiary1, masterAgreement.party1), (custodialDvp.beneficiary2, masterAgreement.party2))
+        custodialDeliveryResults <- mapA (doCustodialSettlement masterAgreement seller buyer) deliveryInstructionContracts
+        custodialPaymentResults <- mapA (doCustodialSettlement masterAgreement buyer seller) paymentInstructionContracts
+
+        -- Deposits are returned with the legal ownership deposits first, followed by the beneficial ownership deposits
+        let mergeDeposits (deposits, custodialDeposits) = deposits <> custodialDeposits
+        let finalPaymentResults = mergeDeposits <$> zip dvpPaymentDepositCids custodialPaymentResults
+            finalDeliveryResults = mergeDeposits <$> zip dvpDeliveryDepositCids custodialDeliveryResults
+        return CustodialDvpSettlement_Process_Result
+          with
+            custodialDvpCid
+            paymentDepositCids = finalPaymentResults
+            deliveryDepositCids = finalDeliveryResults
+
+archiveDummyAssetDeposits : [CustodialTransfer] -> [[ContractId AssetDeposit]] -> Update [[ContractId AssetDeposit]]
+archiveDummyAssetDeposits transfers deposits = forA (zip transfers deposits) $ \(transfer, deps) ->
+  if O.isSome transfer.settlementCid then
+    pure deps
+  else do
+    F.mapA_ archive deps
+    pure []
+
+createDummySettlementInstructions : Account -> MasterAgreement -> Id -> [CustodialTransfer] -> Update [ContractId SettlementInstruction]
+createDummySettlementInstructions dummyAccount masterAgreement tradeId transfers = forA transfers $ \transfer -> case transfer.settlementCid of
+  Some cid -> pure cid
+  None -> do
+    allocationChange <- fetch transfer.allocationChangeCid
+    createDummySettlementInstruction dummyAccount masterAgreement tradeId allocationChange.asset
+
+createDummySettlementInstruction : Account -> MasterAgreement -> Id -> Asset -> Update (ContractId SettlementInstruction)
+createDummySettlementInstruction dummyAccount masterAgreement tradeId asset = do 
+  depositCid <- create AssetDeposit with
+    account = dummyAccount
+    asset
+    observers = Set.empty
+  let step = SettlementDetails with
+        senderAccount = dummyAccount
+        receiverAccount = dummyAccount
+        depositCid = Some depositCid
+  create SettlementInstruction with
+    masterAgreement
+    tradeId
+    asset
+    steps = [step]
+    observers = Set.empty
+
+doCustodialSettlement : MasterAgreement ->
+                        (Party, Party) ->
+                        (Party, Party) ->
+                        (AllocationChangeInstruction, Optional SettlementInstruction) ->
+                        Update [ContractId AssetDeposit]
+doCustodialSettlement masterAgreement (sender, senderCustodian) (receiver, receiverCustodian) (allocationChange, settlementOpt) = do
+  (_, lastDeallocationCust) <- fetchByKey @CustodyService (last allocationChange.deallocations).account.id
+  (_, firstAllocationCust) <- fetchByKey @CustodyService (head allocationChange.allocations).account.id
+  -- Sender/receiver must have a common parent or there exists a settlement instruction between their custodians
+  case settlementOpt of
+    Some settlement -> lastDeallocationCust.parent === (head settlement.steps).senderAccount
+    None -> lastDeallocationCust.parent === firstAllocationCust.parent
+  lastDeallocationCust.parent.owner === senderCustodian
+  firstAllocationCust.parent.owner === receiverCustodian
+
+  (head allocationChange.deallocations).account.owner === sender
+  (last allocationChange.allocations).account.owner === receiver
+  F.forA_ settlementOpt $ \settlement -> allocationChange.asset === settlement.asset
+  allocationChange.masterAgreement === masterAgreement
+
+  exerciseByKey @AllocationChangeInstruction (key allocationChange) AllocationChangeInstruction_Process
+
+fetchCustodialTransfer : CustodialTransfer -> Update (AllocationChangeInstruction, Optional SettlementInstruction)
+fetchCustodialTransfer transfer = do
+  allocationChange <- fetch transfer.allocationChangeCid
+  settlement <- T.mapA fetch transfer.settlementCid
+  pure (allocationChange, settlement)

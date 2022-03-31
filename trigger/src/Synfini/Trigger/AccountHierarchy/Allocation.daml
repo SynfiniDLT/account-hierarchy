@@ -1,0 +1,98 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+module Synfini.Trigger.AccountHierarchy.Allocation where
+
+import DA.Action (unless, void)
+import DA.Bifunctor (bimap)
+import DA.Either (partitionEithers)
+import DA.Finance.Asset
+import DA.List
+import DA.Map (Map)
+import qualified DA.Map as Map
+import qualified DA.Optional as O
+import qualified DA.Set as Set
+import DA.Tuple (fst3)
+import Daml.Trigger
+import Synfini.AccountHierarchy.Allocation
+import Synfini.Trigger.AccountHierarchy.Utils
+
+template AllocationChangeRuleTrigger
+  with
+    sig : Party
+  where
+    signatory sig
+
+    key sig : Party
+    maintainer key
+
+    nonconsuming choice AllocationChangeRuleTrigger_ConfirmNextDeallocations : [ContractId AllocationChangeInstruction]
+      with
+        instructionCids : [ContractId AllocationChangeInstruction]
+        depositCids : [ContractId AssetDeposit]
+      controller sig
+      do
+        instructions <- mapA fetch instructionCids
+        depositCids <- mergeAssetDeposits depositCids $ (\instruction -> instruction.asset.quantity) <$> instructions
+        forA (zip3 instructionCids instructions depositCids) $ \(instructionCid, instruction, depositCid) -> do
+          let (Left deallocation) = O.fromSome $ nextInstruction sig instruction
+          depositCidWithObservers <- exercise depositCid AssetDeposit_SetObservers with newObservers = instruction.masterAgreement.id.signatories
+          exerciseByKey @AllocationChangeRule deallocation.account.id AllocationChangeRule_ConfirmNextDeallocation with
+            allocationChangeInstructionCid = instructionCid
+            depositCid = depositCidWithObservers
+
+nextInstruction : Party -> AllocationChangeInstruction -> Optional (Either DeallocationDetails AllocationDetails)
+nextInstruction party instruction =
+  case find (\deallocation -> O.isNone $ deallocation.depositCid) instruction.deallocations of
+    None -> case find (\allocation -> not $ allocation.confirmed) instruction.allocations of
+      None -> None
+      Some allocation -> if allocation.account.owner == party then Some $ Right allocation else None
+    Some deallocation -> if deallocation.account.owner == party then Some $ Left deallocation else None
+
+cids : Template t => (a -> ContractId t) -> [a] -> [AnyContractId]
+cids f = fmap (toAnyContractId . f)
+
+groupOnWithKey : Ord k => (a -> k) -> [a] -> Map k [a]
+groupOnWithKey getKey l = Map.fromList $ (\group -> (getKey (head group), group)) <$> groupOn getKey l
+
+allocationRule : Party -> TriggerA () ()
+allocationRule party = do
+  instructions <- query @AllocationChangeInstruction
+  let allocatedDepositCids = Set.fromList $
+        concatMap (\(_, instruction) -> O.catOptionals $ (\deallocation -> deallocation.depositCid) <$> instruction.deallocations)
+        instructions
+  let (deallocations, allocations) = partitionEithers . O.catOptionals $
+        (\(instructionCid, instruction) -> (bimap (instructionCid,instruction.asset.id,) (instructionCid,)) <$> nextInstruction party instruction) <$>
+        instructions
+  deposits <- query @AssetDeposit
+  let unallocatedDeposits = filter (\(depositCid, _) -> not $ depositCid `Set.member` allocatedDepositCids) deposits
+  let unallocatedDepositsGrouped = groupOnWithKey (\(_, deposit) -> (deposit.asset.id, deposit.account.id)) unallocatedDeposits
+  let deallocationsGrouped = groupOnWithKey (\(_, assetId, deallocation) -> (assetId, deallocation.account.id)) deallocations
+  let mkDeallocationConfirmationCmd (k, deallocationsForK) = do
+        depositsForK <- Map.lookup k unallocatedDepositsGrouped
+        pure $ exerciseByKeyCmd @AllocationChangeRuleTrigger
+          party
+          AllocationChangeRuleTrigger_ConfirmNextDeallocations with
+            instructionCids = fst3 <$> deallocationsForK
+            depositCids = fst <$> depositsForK
+  let deallocationConfirmationCmds = O.mapOptional mkDeallocationConfirmationCmd (Map.toList deallocationsGrouped)
+  let allocationConfirmationCmds =
+        (\(instructionCid, allocationDetails) -> exerciseByKeyCmd @AllocationChangeRule
+          allocationDetails.account.id
+          AllocationChangeRule_ConfirmNextAllocation with
+            allocationChangeInstructionCid = instructionCid) <$>
+        allocations
+  unless
+    (null deallocationConfirmationCmds)
+    (void $ emitCommands deallocationConfirmationCmds (cids fst3 deallocations <> cids fst unallocatedDeposits))
+  unless
+    (null allocationConfirmationCmds)
+    (void $ emitCommands allocationConfirmationCmds (cids fst allocations))
+
+trigger : Trigger ()
+trigger = Trigger with
+  initialize = pure ()
+  updateState = \_ -> pure ()
+  rule = allocationRule
+  registeredTemplates = RegisteredTemplates [registeredTemplate @AllocationChangeInstruction, registeredTemplate @AssetDeposit]
+  heartbeat = None

@@ -1,0 +1,83 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+module Synfini.AccountHierarchy.Service where
+
+import DA.Assert ((===))
+import DA.Finance.Types
+import DA.Set (Set)
+import qualified DA.Set as Set
+
+template CustodyService
+  with
+    parent : Account
+    account : Account
+    observers : Set Party
+  where
+    signatory account.id.signatories, account.owner, parent.id.signatories
+    observer observers
+
+    ensure account.provider == parent.owner
+
+    key account.id : Id
+    maintainer key.signatories
+
+    choice CustodyService_SetObservers : ContractId CustodyService
+      with
+        newObservers : Set Party
+      controller account.owner
+      do
+        create this with observers = newObservers
+
+template CustodyServiceRequest
+  with
+    parent : Account
+    account : Account
+  where
+    signatory account.owner
+    observer parent.id.signatories, parent.provider, parent.owner, account.id.signatories, account.provider
+
+    choice CustodyServiceRequest_Accept : ContractId CustodyService
+      controller account.id.signatories, parent.id.signatories
+      do
+        create CustodyService with account, parent, observers = Set.empty
+
+    choice CustodyServiceRequest_Cancel : ()
+      controller account.owner
+      do
+        pure ()
+
+    choice CustodyServiceRequest_Reject : ()
+      controller account.id.signatories, parent.id.signatories
+      do
+        pure ()
+
+template CustodianRole
+  with
+    account : Account -- ^ The account provider grants the account owner the ability to act as a custodian i.e.
+    -- delegating beneficial ownership of the assets held in this account to third parties.
+    observers : Set Party
+  where
+    signatory account.id.signatories
+    observer account.provider, account.owner
+
+    key account.id : Id
+    maintainer key.signatories
+
+    nonconsuming choice CustodianRole_AcceptServiceRequest : ContractId CustodyService
+      with
+        serviceRequestCid : ContractId CustodyServiceRequest
+      controller account.owner
+      do
+        serviceRequest <- fetch serviceRequestCid
+        serviceRequest.parent === account
+        exercise serviceRequestCid CustodyServiceRequest_Accept
+
+    nonconsuming choice CustodianRole_RejectServiceRequest : ()
+      with
+        serviceRequestCid : ContractId CustodyServiceRequest
+      controller account.owner
+      do
+        serviceRequest <- fetch serviceRequestCid
+        serviceRequest.parent === account
+        exercise serviceRequestCid CustodyServiceRequest_Reject

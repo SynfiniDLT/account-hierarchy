@@ -1,0 +1,166 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+module Synfini.AccountHierarchy.Allocation where
+
+import DA.Action (unless)
+import DA.Assert ((===))
+import DA.Finance.Asset
+import DA.Finance.Types
+import qualified DA.Foldable as F
+import DA.List
+import qualified DA.List.Total as LT
+import qualified DA.Optional as O
+import DA.Set (Set)
+import qualified DA.Set as Set
+import Synfini.AccountHierarchy.Service
+
+template AllocationChangeRule
+  with
+    account : Account
+  where
+    signatory account.id.signatories
+    observer account.owner
+
+    key account.id : Id
+    maintainer key.signatories
+
+    nonconsuming choice AllocationChangeRule_ConfirmNextAllocation : ContractId AllocationChangeInstruction
+      with
+        allocationChangeInstructionCid : ContractId AllocationChangeInstruction
+      controller account.owner
+      do
+        allocationChangeInstruction <- fetch allocationChangeInstructionCid
+        let (_, unconfirmedAllocations) = splitAllocations allocationChangeInstruction.allocations
+        (head unconfirmedAllocations).account === account
+        exercise allocationChangeInstructionCid AllocationChangeInstruction_ConfirmNextAllocation
+
+    nonconsuming choice AllocationChangeRule_ConfirmNextDeallocation : ContractId AllocationChangeInstruction
+      with
+        allocationChangeInstructionCid : ContractId AllocationChangeInstruction
+        depositCid : ContractId AssetDeposit
+      controller account.owner
+      do
+        allocationChangeInstruction <- fetch allocationChangeInstructionCid
+        let (_, unconfirmedDeallocations) = splitDeallocations allocationChangeInstruction.deallocations
+        (head unconfirmedDeallocations).account === account
+        exercise allocationChangeInstructionCid AllocationChangeInstruction_ConfirmNextDeallocation with depositCid
+
+data AllocationDetails = AllocationDetails
+  with
+    account : Account
+    confirmed : Bool
+  deriving (Show, Eq)
+
+-- | HIDE
+splitAllocations : [AllocationDetails] -> ([AllocationDetails], [AllocationDetails])
+splitAllocations = partition (\allocation -> allocation.confirmed)
+
+allocationSignatories : [AllocationDetails] -> [Party]
+allocationSignatories = concatMap (\detail -> Set.toList detail.account.id.signatories)
+
+data DeallocationDetails = DeallocationDetails
+  with
+   account : Account
+   depositCid : Optional (ContractId AssetDeposit)
+  deriving (Show, Eq)
+
+splitDeallocations : [DeallocationDetails] -> ([DeallocationDetails], [DeallocationDetails])
+splitDeallocations = partition (\deallocationDetails -> O.isSome deallocationDetails.depositCid)
+
+deallocationSignatories : [DeallocationDetails] -> [Party]
+deallocationSignatories = concatMap (\deallocation -> Set.toList deallocation.account.id.signatories)
+
+assertIsLeafNode : Account -> Update ()
+assertIsLeafNode account = do
+  custodialRole <- lookupByKey @CustodianRole account.id
+  custodialRole === None
+
+assertAtHierarchyTop : Account -> Update ()
+assertAtHierarchyTop account = do
+  (_, topCustodyService) <- fetchByKey @CustodyService account.id
+  rootCustodyService <- lookupByKey @CustodyService topCustodyService.parent.id
+  rootCustodyService === None
+
+assertSameParent : Account -> Account -> Update ()
+assertSameParent acc1 acc2 = do
+  (_, custodyService1) <- fetchByKey @CustodyService acc1.id
+  (_, custodyService2) <- fetchByKey @CustodyService acc2.id
+  custodyService1.parent === custodyService2.parent
+
+getParent : Account -> Update Account
+getParent account = do
+  (_, custodyService) <- fetchByKey @CustodyService account.id
+  pure custodyService.parent
+
+template AllocationChangeInstruction
+  with
+    asset : Asset
+    deallocations : [DeallocationDetails] -- ^ De-allocations from bottom to top of the hierarchy.
+    allocations : [AllocationDetails] -- ^ Allocations from top to bottom of the hierarchy.
+    masterAgreement : MasterAgreement
+    tradeId : Id
+    observers : Set Party
+  where
+    signatory masterAgreement.id.signatories,
+      deallocationSignatories confirmedDeallocations,
+      allocationSignatories confirmedAllocations
+    observer masterAgreement.party1,
+      masterAgreement.party2,
+      deallocationSignatories unconfirmedDeallocations,
+      allocationSignatories unconfirmedAllocations,
+      observers
+
+    key (masterAgreement.id, tradeId, asset.id) : (Id, Id, Id)
+    maintainer key._1.signatories
+
+    let (confirmedDeallocations, unconfirmedDeallocations) = splitDeallocations deallocations
+        (confirmedAllocations, unconfirmedAllocations) = splitAllocations allocations
+
+    choice AllocationChangeInstruction_ConfirmNextAllocation : ContractId AllocationChangeInstruction
+      controller optional Set.empty (\allocation -> allocation.account.id.signatories) (LT.head unconfirmedAllocations)
+      do
+        unconfirmedDeallocations === []
+        let nextAllocation = head unconfirmedAllocations
+        create this with allocations = confirmedAllocations <> ((nextAllocation with confirmed = True) :: tail unconfirmedAllocations)
+
+    choice AllocationChangeInstruction_ConfirmNextDeallocation : ContractId AllocationChangeInstruction
+      with
+        depositCid : ContractId AssetDeposit
+      controller optional Set.empty (\deallocation -> deallocation.account.id.signatories) (LT.head unconfirmedDeallocations)
+      do
+        allocation <- fetch depositCid
+        allocation.asset === asset
+        let nextDeallocation = head unconfirmedDeallocations
+        allocation.account === nextDeallocation.account
+        let updatedNextDeallocation = nextDeallocation with depositCid = Some depositCid
+        create this with deallocations = confirmedDeallocations <> (updatedNextDeallocation :: tail unconfirmedDeallocations)
+
+    choice AllocationChangeInstruction_Process : [ContractId AssetDeposit]
+      controller masterAgreement.id.signatories
+      do
+        unless (null deallocations) do
+          F.forA_ (zip deallocations (tail deallocations)) $ \(deallocation, nextDeallocation) -> do
+            (_, custodialSerivce) <- fetchByKey @CustodyService deallocation.account.id
+            custodialSerivce.parent === nextDeallocation.account
+          F.mapA_ (\deallocation -> archive $ O.fromSome deallocation.depositCid) deallocations
+          assertIsLeafNode (head deallocations).account
+
+        unless (null allocations) do
+          F.forA_ (zip allocations (tail allocations)) $ \(allocation, nextAllocation) -> do
+            (_, custodyService) <- fetchByKey @CustodyService nextAllocation.account.id
+            custodyService.parent === allocation.account
+          assertIsLeafNode (last allocations).account
+
+        case (LT.last deallocations, LT.head allocations) of
+          (Some topDeallocation, Some topAllocation) -> do
+            deallocationParent <- getParent topDeallocation.account
+            allocationParent <- getParent topAllocation.account
+            unless (deallocationParent == allocationParent) do
+              assertAtHierarchyTop topDeallocation.account
+              assertAtHierarchyTop topAllocation.account
+          (Some topDeallocation, None) -> assertAtHierarchyTop topDeallocation.account
+          (None, Some topAllocation) -> assertAtHierarchyTop topAllocation.account
+          (None, None) -> pure ()
+
+        mapA (\step -> create AssetDeposit with account = step.account, asset, observers = Set.empty) allocations

@@ -1,0 +1,733 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+{-# LANGUAGE ApplicativeDo #-}
+
+module Synfini.AccountHierarchy.Examples where
+
+import DA.Finance.Asset
+import DA.Finance.Asset.Lifecycle
+import DA.Finance.Asset.Settlement
+import DA.Finance.Trade.Dvp
+import DA.Finance.Trade.SettlementInstruction
+import DA.Finance.Types
+import qualified DA.Set as Set
+import Daml.Script
+import Synfini.AccountHierarchy.Allocation
+import Synfini.AccountHierarchy.Lifecycle
+import Synfini.AccountHierarchy.Service
+import Synfini.AccountHierarchy.Trade
+
+{-
+The following examples demonstrate the design and functionality of the Account Hierarchcy library. It assumes the
+reader is familiar with the basics of the FinLib such as `Account`, `Asset` and `AssetDepoit`.
+-}
+
+{-
+In the simplest possible case, an account hierarchy is setup involving a single custodian. At the top of any account
+hierarchy is the legal owner of assets, sitting beneath this are the beneficial owners. In this case, Acme is the
+legal owner of 50 units of Morley Corporation Stock (MLY), held at the Central Securities Depository (CSD). The CSD
+createsa `CustodianRole` contract for Acme which allows Acme to delegate beneficial ownership of the assets (held in
+Acme's account at the CSD) to other parties. A propose-accept workflow is initiated by Alice to request Acme to act as
+a custodian for her. Since Acme has a `CustodianRole` it is able to accept the proposal. As a result, a `CustodyService`
+contract is created which makes Alice's account a child of Acme's account. This means that any Alice has only
+beneficial ownership of any `AssetDeposit`s held in her account, and these `AssetDeposit`s represent an allocation to
+Alice of some portition of the assets held in Acme's account.
+-}
+example1 : Script ()
+example1 = do
+  morley <- allocateParty "Morley Corporation"
+  csd <- allocateParty "Central Securities Depository"
+  acme <- allocateParty "Acme Custodian"
+  alice <- allocateParty "Alice"
+
+  let
+    morleyId = Id with signatories = Set.fromList [morley], label = "MLY Class A Shares", version = 0
+    morleyStock = Asset with id = morleyId, quantity = 50.0
+
+    acmeAccountId = Id with signatories = Set.fromList [csd], label = "Acme@CSD", version = 0
+    acmeAccount = Account with id = acmeAccountId, provider = csd, owner = acme
+    acmeDeposit = AssetDeposit with account = acmeAccount, asset = morleyStock, observers = Set.empty
+    acmeCustodianRole = CustodianRole with account = acmeAccount, observers = Set.empty
+
+    aliceAccountId = Id with signatories = Set.fromList [acme], label = "Alice@Acme", version = 0
+    aliceAccount = Account with id = aliceAccountId, provider = acme, owner = alice
+    aliceDeposit = AssetDeposit with account = aliceAccount, asset = morleyStock, observers = Set.empty
+
+  acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
+
+  aliceCustServiceRequestCid <- submit alice do createCmd CustodyServiceRequest with account = aliceAccount, parent = acmeAccount
+  submit acme do
+    exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = aliceCustServiceRequestCid
+
+  submit csd do createCmd acmeDeposit
+  submit acme do createCmd aliceDeposit
+  pure ()
+
+{-
+In this example we have a multi-level account hierarchy where Acme delegates beneficial ownership to another custodian,
+Ajax. In turn, Ajax grants beneficial ownership to Alice. Through some means (e.g. purchase or transfer), Alice has
+acquired beneficial ownership of an additional 50 shares of Morley. Consequently the `AssetDeposit` contracts must be
+created at multiple levels in the account hierarchy. The creation of all of these contracts can be done atomically by
+means of an `AllocationChangeInstruction`. This contract requries each custodian to consent to allocate an asset to a
+particular beneficary (by exercising the `AllocationChangeInstruction_ConfirmNextAllocation` choice). In this case, the
+`AllocationChangeInstruction` represents a total increase of 50 Morley shares into the hierarchy.
+
+It is important to note that in these examples, the signatories of `AssetDeposit`s as the bottom of the hierarchy
+include only the direct custodian of the beneficiary, not the ultimate legal owner of the asset. This simplifies the
+examples. The problem with this approach is that custodians at the bottom of the hierarchy may unilaterally create
+`AssetDeposit`s in these accounts without authorization from the legal owner. Depending on the level of trust between
+parties, these `AssetDeposit`s could be signed by all custodians involved. The templates can cater to both trust models.
+-}
+example2 : Script ()
+example2 = do
+  morley <- allocateParty "Morley Corporation"
+  csd <- allocateParty "Central Securities Depository"
+  acme <- allocateParty "Acme Custodian"
+  ajax <- allocateParty "Ajax Custodian"
+  alice <- allocateParty "Alice"
+
+  let
+    morleyId = Id with signatories = Set.fromList [morley], label = "MLY Class A Shares", version = 0
+    morleyStock = Asset with id = morleyId, quantity = 50.0
+
+    acmeAccountId = Id with signatories = Set.fromList [csd], label = "Acme@CSD", version = 0
+    acmeAccount = Account with id = acmeAccountId, provider = csd, owner = acme
+    acmeDeposit = AssetDeposit with account = acmeAccount, asset = morleyStock, observers = Set.empty
+    acmeCustodianRole = CustodianRole with account = acmeAccount, observers = Set.empty
+
+    ajaxAccountId = Id with signatories = Set.fromList [acme], label = "Ajax@Acme", version = 0
+    ajaxAccount = Account with id = ajaxAccountId, provider = acme, owner = ajax
+    ajaxDeposit = AssetDeposit with account = ajaxAccount, asset = morleyStock, observers = Set.empty
+    ajaxCustodianRole = CustodianRole with account = ajaxAccount, observers = Set.empty
+
+    aliceAccountId = Id with signatories = Set.fromList [ajax], label = "Alice@Ajax", version = 0
+    aliceAccount = Account with id = aliceAccountId, provider = ajax, owner = alice
+    aliceDeposit = AssetDeposit with account = aliceAccount, asset = morleyStock, observers = Set.empty
+
+    allocationAgreementId = Id with signatories = Set.fromList [csd], label = "Allocation triggered by CSD", version = 0
+    allocationAgreement = MasterAgreement with id = allocationAgreementId, party1 = csd, party2 = alice
+    allocationToAjax = AllocationDetails with account = ajaxAccount, confirmed = False
+    allocationToAlice = AllocationDetails with account = aliceAccount, confirmed = False
+    allocationTradeId = Id with signatories = Set.fromList [acme], label = "Alice@Ajax +50 Morley", version = 0
+
+  acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
+  ajaxCustodianRoleCid <- submit acme do createCmd ajaxCustodianRole
+
+  ajaxCustServiceRequestCid <- submit ajax do createCmd CustodyServiceRequest with account = ajaxAccount, parent = acmeAccount
+  ajaxCustServiceCid <- submit acme do
+    exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = ajaxCustServiceRequestCid
+  submit ajax do
+    exerciseCmd ajaxCustServiceCid CustodyService_SetObservers with newObservers = Set.fromList [csd]
+
+  aliceCustServiceRequestCid <- submit alice do createCmd CustodyServiceRequest with account = aliceAccount, parent = ajaxAccount
+  aliceCustServiceCid <- submit ajax do
+    exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = aliceCustServiceRequestCid
+  submit alice do
+    exerciseCmd aliceCustServiceCid CustodyService_SetObservers with newObservers = Set.fromList [csd]
+
+  submit csd do
+    createCmd AllocationChangeInstruction with
+      asset = morleyStock
+      masterAgreement = allocationAgreement
+      tradeId = allocationTradeId
+      deallocations = []
+      allocations = [allocationToAjax, allocationToAlice]
+      observers = Set.empty
+  let allocationKey = (allocationAgreementId, allocationTradeId, morleyId)
+  submit acme do
+    exerciseByKeyCmd @AllocationChangeInstruction allocationKey AllocationChangeInstruction_ConfirmNextAllocation
+  submit ajax do
+    exerciseByKeyCmd @AllocationChangeInstruction allocationKey AllocationChangeInstruction_ConfirmNextAllocation
+
+  -- Creation of the legally-owned AssetDeposit must be done separately from the `AllocationChangeInstruction`, hence
+  -- the use of the first `createCmd` below. `AllocationChangeInstruction`s only change beneficial (not legal) ownership.
+  submit csd do
+    createCmd acmeDeposit
+    exerciseByKeyCmd @AllocationChangeInstruction allocationKey AllocationChangeInstruction_Process
+    pure ()
+
+{-
+In some scenarios it may not be possible to atomitically allocate assets all the way down the account hierarchy. The
+alternative is to split allocation into an initial step where assets are allocated to a "default" or "unallocated"
+account. Assets are held temporarily in this account before another allocation to the desired beneficiary. In the
+following example Morley shares are allocated to Acme's deafult account ("Acme@Acme") before being allocated to
+Alice's account.
+-}
+example3 : Script ()
+example3 = do
+  morley <- allocateParty "Morley Corporation"
+  csd <- allocateParty "Central Securities Depository"
+  acme <- allocateParty "Acme Custodian"
+  ajax <- allocateParty "Ajax Custodian"
+  alice <- allocateParty "Alice"
+
+  let
+    morleyId = Id with signatories = Set.fromList [morley], label = "MLY Class A Shares", version = 0
+    morleyStock = Asset with id = morleyId, quantity = 50.0
+
+    acmeAccountId = Id with signatories = Set.fromList [csd], label = "Acme@CSD", version = 0
+    acmeAccount = Account with id = acmeAccountId, provider = csd, owner = acme
+    acmeDefaultAccountId = Id with signatories = Set.fromList [acme], label = "Acme@Acme", version = 0
+    acmeDefaultAccount = Account with id = acmeDefaultAccountId, owner = acme, provider = acme
+    acmeDeposit = AssetDeposit with account = acmeAccount, asset = morleyStock, observers = Set.empty
+    acmeCustodianRole = CustodianRole with account = acmeAccount, observers = Set.empty
+
+    ajaxAccountId = Id with signatories = Set.fromList [acme], label = "Ajax@Acme", version = 0
+    ajaxAccount = Account with id = ajaxAccountId, provider = acme, owner = ajax
+    ajaxDeposit = AssetDeposit with account = ajaxAccount, asset = morleyStock, observers = Set.empty
+    ajaxCustodianRole = CustodianRole with account = ajaxAccount, observers = Set.empty
+
+    aliceAccountId = Id with signatories = Set.fromList [ajax], label = "Alice@Ajax", version = 0
+    aliceAccount = Account with id = aliceAccountId, provider = ajax, owner = alice
+    aliceDeposit = AssetDeposit with account = aliceAccount, asset = morleyStock, observers = Set.empty
+
+    csdAllocationAgreementId = Id with signatories = Set.fromList [csd], label = "Allocation triggered by CSD", version = 0
+    csdAllocationAgreement = MasterAgreement with id = csdAllocationAgreementId, party1 = csd, party2 = acme
+    acmeAllocationAgreementId = Id with signatories = Set.fromList [acme], label = "Allocation triggered by Acme", version = 0
+    acmeAllocationAgreement = MasterAgreement with id = acmeAllocationAgreementId, party1 = acme, party2 = alice
+    allocationToAcme = AllocationDetails with account = acmeDefaultAccount, confirmed = False
+    allocationToAjax = AllocationDetails with account = ajaxAccount, confirmed = True
+    allocationToAlice = AllocationDetails with account = aliceAccount, confirmed = False
+    deallocationFromAcme = DeallocationDetails with account = acmeDefaultAccount, depositCid = None
+    acmeTradeId = Id with signatories = Set.fromList [acme], label = "Acme@Acme +50 Morley", version = 0
+    aliceTradeId = Id with signatories = Set.fromList [alice], label = "Alice@Ajax +50 Morley", version = 0
+
+  acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
+  ajaxCustodianRoleCid <- submit acme do createCmd ajaxCustodianRole
+
+  acmeCustServiceRequestCid <- submit acme do
+    createCmd CustodyServiceRequest with account = acmeDefaultAccount, parent = acmeAccount
+  submit acme do
+    exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = acmeCustServiceRequestCid
+
+  ajaxCustServiceRequestCid <- submit ajax do createCmd CustodyServiceRequest with account = ajaxAccount, parent = acmeAccount
+  ajaxCustServiceCid <- submit acme do
+    exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = ajaxCustServiceRequestCid
+
+  aliceCustServiceRequestCid <- submit alice do createCmd CustodyServiceRequest with account = aliceAccount, parent = ajaxAccount
+  aliceCustServiceCid <- submit ajax do
+    exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = aliceCustServiceRequestCid
+
+  submit csd do
+    createCmd AllocationChangeInstruction with
+      asset = morleyStock
+      masterAgreement = csdAllocationAgreement
+      tradeId = acmeTradeId
+      deallocations = []
+      allocations = [allocationToAcme]
+      observers = Set.empty
+  submit acme do
+    exerciseByKeyCmd @AllocationChangeInstruction (csdAllocationAgreementId, acmeTradeId, morleyId) AllocationChangeInstruction_ConfirmNextAllocation
+  [acmeDefaultDepositCid] <- submit csd do
+    createCmd acmeDeposit
+    deps <- exerciseByKeyCmd @AllocationChangeInstruction (csdAllocationAgreementId, acmeTradeId, morleyId) AllocationChangeInstruction_Process
+    pure deps
+  let deallocationFromAcmeConfirmed = deallocationFromAcme with depositCid = Some acmeDefaultDepositCid
+  submit acme do
+    createCmd AllocationChangeInstruction with
+      asset = morleyStock
+      masterAgreement = acmeAllocationAgreement
+      tradeId = aliceTradeId
+      deallocations = [deallocationFromAcmeConfirmed]
+      allocations = [allocationToAjax, allocationToAlice]
+      observers = Set.empty
+  submit ajax do
+    exerciseByKeyCmd @AllocationChangeInstruction
+      (acmeAllocationAgreementId, aliceTradeId, morleyId)
+      AllocationChangeInstruction_ConfirmNextAllocation
+  submit acme do
+    exerciseByKeyCmd @AllocationChangeInstruction
+      (acmeAllocationAgreementId, aliceTradeId, morleyId)
+      AllocationChangeInstruction_Process
+  pure ()
+
+data SingleDomainDvpProposal_AcceptResult = SingleDomainDvpProposal_AcceptResult
+  with
+    custodialDvpCid : ContractId CustodialDvp
+    custodialDvpSettlementRuleCid : ContractId CustodialDvpSettlementRule
+    paymentInstructionCid : ContractId AllocationChangeInstruction
+    deliveryInstructionCid : ContractId AllocationChangeInstruction
+  deriving (Show, Eq)
+
+template SingleDomainDvpProposal
+  with
+    tradeId : Id
+    payment : Asset
+    delivery : Asset
+    payerAccount : Account
+    delivererAccount : Account
+    parentAccount : Account
+  where
+    signatory payerAccount.owner
+    observer delivererAccount.owner
+
+    choice SingleDomainDvpProposal_Accept : SingleDomainDvpProposal_AcceptResult
+      controller delivererAccount.owner
+      do
+        let masterAgreementId = Id with
+              label = "Single domain agreement between " <> show payerAccount <> " and " <> show delivererAccount
+              version = 0
+              signatories = Set.fromList [payerAccount.owner, delivererAccount.owner]
+            masterAgreement = MasterAgreement with
+              id = masterAgreementId
+              party1 = parentAccount.owner
+              party2 = parentAccount.owner
+            dvp = Dvp with
+              masterAgreement
+              tradeId
+              buyer = parentAccount.owner
+              status = SettlementStatus_Instructed
+              settlementDate = None
+              payments = [payment]
+              deliveries = [delivery]
+              observers = Set.empty
+            allocationToPayer = AllocationDetails with
+              account = payerAccount
+              confirmed = False
+            allocationToDeliverer = AllocationDetails with
+              account = delivererAccount
+              confirmed = False
+            deallocationFromPayer = DeallocationDetails with
+              account = payerAccount
+              depositCid = None
+            deallocationFromDeliverer = DeallocationDetails with
+              account = delivererAccount
+              depositCid = None
+        custodialDvpCid <- create CustodialDvp with dvp, beneficiary1 = payerAccount.owner, beneficiary2 = delivererAccount.owner
+        paymentInstructionCid <- create AllocationChangeInstruction with
+          asset = payment
+          allocations = [allocationToDeliverer]
+          deallocations = [deallocationFromPayer]
+          masterAgreement
+          tradeId
+          observers = Set.empty
+        custodialDvpSettlementRuleCid <- create CustodialDvpSettlementRule with masterAgreement
+        deliveryInstructionCid <- create AllocationChangeInstruction with
+          asset = delivery
+          allocations = [allocationToPayer]
+          deallocations = [deallocationFromDeliverer]
+          masterAgreement
+          tradeId
+          observers = Set.empty
+        pure SingleDomainDvpProposal_AcceptResult with
+          custodialDvpCid
+          custodialDvpSettlementRuleCid
+          paymentInstructionCid
+          deliveryInstructionCid
+
+example4 : Script ()
+example4 = do
+  morley <- allocateParty "Morley Corporation"
+  csd <- allocateParty "Central Securities Depository"
+  acme <- allocateParty "Acme Custodian"
+  ajax <- allocateParty "Ajax Custodian"
+  alice <- allocateParty "Alice"
+  bob <- allocateParty "Alice"
+
+  let
+    morleyId = Id with signatories = Set.fromList [morley], label = "MLY Class A Shares", version = 0
+    morleyStock = Asset with id = morleyId, quantity = 50.0
+    audId = Id with signatories = Set.fromList [], label = "Australian Dollar", version = 0
+    twoThousandDollars = Asset with id = audId, quantity = 2000.0
+
+    acmeAccountId = Id with signatories = Set.fromList [csd], label = "Acme@CSD", version = 0
+    acmeAccount = Account with id = acmeAccountId, provider = csd, owner = acme
+    acmeMorleyDeposit = AssetDeposit with account = acmeAccount, asset = morleyStock, observers = Set.empty
+    acmeCashDeposit = AssetDeposit with account = acmeAccount, asset = twoThousandDollars, observers = Set.empty
+    acmeCustodianRole = CustodianRole with account = acmeAccount, observers = Set.empty
+
+    ajaxAccountId = Id with signatories = Set.fromList [acme], label = "Ajax@Acme", version = 0
+    ajaxAccount = Account with id = ajaxAccountId, provider = acme, owner = ajax
+    ajaxMorleyDeposit = AssetDeposit with account = ajaxAccount, asset = morleyStock, observers = Set.empty
+    ajaxCashDeposit = AssetDeposit with account = ajaxAccount, asset = twoThousandDollars, observers = Set.empty
+    ajaxCustodianRole = CustodianRole with account = ajaxAccount, observers = Set.empty
+
+    aliceAccountId = Id with signatories = Set.fromList [ajax], label = "Alice@Ajax", version = 0
+    aliceAccount = Account with id = aliceAccountId, provider = ajax, owner = alice
+    aliceDeposit = AssetDeposit with account = aliceAccount, asset = morleyStock, observers = Set.empty
+
+    bobAccountId = Id with signatories = Set.fromList [ajax], label = "bob@Ajax", version = 0
+    bobAccount = Account with id = bobAccountId, provider = ajax, owner = bob
+    bobDeposit = AssetDeposit with account = bobAccount, asset = twoThousandDollars, observers = Set.empty
+
+    tradeId = Id with signatories = Set.fromList [], label = "Bob@Ajax Buy 50 Morley", version = 0
+
+  acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
+  ajaxCustodianRoleCid <- submit acme do createCmd ajaxCustodianRole
+
+  ajaxCustServiceRequestCid <- submit ajax do createCmd CustodyServiceRequest with account = ajaxAccount, parent = acmeAccount
+  ajaxCustServiceCid <- submit acme do
+    exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = ajaxCustServiceRequestCid
+
+  aliceCustServiceRequestCid <- submit alice do createCmd CustodyServiceRequest with account = aliceAccount, parent = ajaxAccount
+  aliceCustServiceCid <- submit ajax do
+    exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = aliceCustServiceRequestCid
+
+  bobCustServiceRequestCid <- submit bob do createCmd CustodyServiceRequest with account = bobAccount, parent = ajaxAccount
+  bobCustServiceCid <- submit ajax do
+    exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = bobCustServiceRequestCid
+
+  -- For brevity, the deposits are created directly rather than via `AllocationChangeInstruction`s
+  submit csd do createCmd acmeMorleyDeposit
+  submit csd do createCmd acmeCashDeposit
+  submit acme do createCmd ajaxMorleyDeposit
+  submit acme do createCmd ajaxCashDeposit
+  aliceDepositCid <- submit ajax do createCmd aliceDeposit
+  bobDepositCid <- submit ajax do createCmd bobDeposit
+
+  dvpPropCid <- submit bob do
+    -- Propose a Dvp between the beneficial owners (Alice and Bob)
+    createCmd SingleDomainDvpProposal with
+      tradeId
+      payment = twoThousandDollars
+      delivery = morleyStock
+      payerAccount = bobAccount
+      delivererAccount = aliceAccount
+      parentAccount = ajaxAccount
+
+  dvpPropResult <- submit alice do
+    exerciseCmd dvpPropCid SingleDomainDvpProposal_Accept
+
+  paymentInstructionCid <- submit ajax do
+    exerciseCmd dvpPropResult.paymentInstructionCid AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = bobDepositCid
+  finalPaymentInstructionCid <- submit ajax do
+    exerciseCmd paymentInstructionCid AllocationChangeInstruction_ConfirmNextAllocation
+
+  deliveryInstructionCid <- submit ajax do
+    exerciseCmd dvpPropResult.deliveryInstructionCid AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = aliceDepositCid
+  finalDeliveryInstructionCid <- submit ajax do
+    exerciseCmd deliveryInstructionCid AllocationChangeInstruction_ConfirmNextAllocation
+
+  submit ajax do
+    exerciseCmd dvpPropResult.custodialDvpSettlementRuleCid CustodialDvpSettlementRule_Process with
+      custodialDvpCid = dvpPropResult.custodialDvpCid
+      paymentInstructionCids = [CustodialTransfer finalPaymentInstructionCid None]
+      deliveryInstructionCids = [CustodialTransfer finalDeliveryInstructionCid None]
+      ctrl = ajax
+  pure ()
+
+{-
+The `CustodialDvpSettlementRule` template can be used to implement a Delivery versus payment transaction (DVP) between
+two beneficial owners which use different custodians. In this example, Bob is buying 50 Morley shares from Alice at a
+cost of 2000 dollars. Alice employs Acme as her custodian, while Bob employs Ajax. Therefore Acme and Ajax must first
+settle with eachother. This is done via `SettlementInstruction`s (provided by FinLib). Following this,
+`AllocationChangeInstruction` are used to allocate the assets to the correct beneficiaries. The
+`CustodialDvpSettlementRule` template allows both of these actions to be executed in a single, atomic transaction. Note
+that it is also possible to use the `CustodialDvpSettlementRule` to perform a transfer by providing an empty list of
+payment assets.
+-}
+example5 : Script ()
+example5 = do
+  morley <- allocateParty "Morley Corporation"
+  csd <- allocateParty "Central Securities Depository"
+  acme <- allocateParty "Acme Custodian"
+  ajax <- allocateParty "Ajax Custodian"
+  alice <- allocateParty "Alice"
+  bob <- allocateParty "Bob"
+
+  let
+    morleyId = Id with signatories = Set.fromList [morley], label = "MLY Class A Shares", version = 0
+    morleyStock = Asset with id = morleyId, quantity = 50.0
+    audId = Id with signatories = Set.fromList [], label = "Australian Dollar", version = 0
+    twoThousandDollars = Asset with id = audId, quantity = 2000.0
+
+    acmeAccountId = Id with signatories = Set.fromList [csd], label = "Acme@CSD", version = 0
+    acmeAccount = Account with id = acmeAccountId, provider = csd, owner = acme
+    acmeSettlementRule = AssetSettlementRule with
+      account = acmeAccount
+      observers = Set.empty
+      ctrls = Set.fromList [ajax]
+    acmeDeposit = AssetDeposit with account = acmeAccount, asset = morleyStock, observers = Set.empty
+    acmeCustodianRole = CustodianRole with account = acmeAccount, observers = Set.empty
+
+    ajaxAccountId = Id with signatories = Set.fromList [csd], label = "Ajax@CSD", version = 0
+    ajaxAccount = Account with id = ajaxAccountId, provider = csd, owner = ajax
+    ajaxSettlementRule = AssetSettlementRule with
+      account = ajaxAccount
+      observers = Set.empty
+      ctrls = Set.fromList [acme]
+    ajaxDeposit = AssetDeposit with account = ajaxAccount, asset = twoThousandDollars, observers = Set.fromList [acme]
+    ajaxCustodianRole = CustodianRole with account = ajaxAccount, observers = Set.empty
+
+    aliceAccountId = Id with signatories = Set.fromList [acme], label = "Alice@Acme", version = 0
+    aliceAccount = Account with id = aliceAccountId, provider = acme, owner = alice
+    aliceDeposit = AssetDeposit with account = aliceAccount, asset = morleyStock, observers = Set.empty
+
+    bobAccountId = Id with signatories = Set.fromList [ajax], label = "Bob@Ajax", version = 0
+    bobAccount = Account with id = bobAccountId, provider = ajax, owner = bob
+    bobDeposit = AssetDeposit with account = bobAccount, asset = twoThousandDollars, observers = Set.fromList [acme]
+
+    masterAgreementId = Id with signatories = Set.fromList [csd], label = "Trade triggered by csd", version = 0
+    masterAgreement = MasterAgreement with id = masterAgreementId, party1 = acme, party2 = ajax
+    tradeId = Id with signatories = Set.fromList [], label = "Alice@Acme Sell 50 Morley", version = 0
+    dvp = Dvp with
+      masterAgreement
+      tradeId
+      buyer = ajax
+      status = SettlementStatus_Instructed
+      settlementDate = None
+      payments = [twoThousandDollars]
+      deliveries = [morleyStock]
+      observers = Set.empty
+    aliceDeallocation = DeallocationDetails with account = aliceAccount, depositCid = None
+    aliceAllocation = AllocationDetails with account = aliceAccount, confirmed = False
+    bobDeallocation = DeallocationDetails with account = bobAccount, depositCid = None
+    bobAllocation = AllocationDetails with account = bobAccount, confirmed = False
+    acmeToAjaxSettlement = SettlementDetails with
+      senderAccount = acmeAccount
+      receiverAccount = ajaxAccount
+      depositCid = None
+    ajaxToAcmeSettlement = SettlementDetails with
+      senderAccount = ajaxAccount
+      receiverAccount = acmeAccount
+      depositCid = None
+
+  submit csd do createCmd acmeSettlementRule
+  submit csd do createCmd ajaxSettlementRule
+
+  acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
+  ajaxCustodianRoleCid <- submit csd do createCmd ajaxCustodianRole
+
+  aliceCustServiceRequestCid <- submit alice do createCmd CustodyServiceRequest with account = aliceAccount, parent = acmeAccount
+  submit acme do
+    exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = aliceCustServiceRequestCid
+
+  bobCustServiceRequestCid <- submit bob do createCmd CustodyServiceRequest with account = bobAccount, parent = ajaxAccount
+  bobCustServiceCid <- submit ajax do
+    exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = bobCustServiceRequestCid
+  submit bob do
+    exerciseCmd bobCustServiceCid CustodyService_SetObservers with newObservers = Set.fromList [acme]
+
+  -- For brevity, the deposits are created directly rather than via `AllocationChangeInstruction`s
+  acmeDepositCid <- submit csd do createCmd acmeDeposit
+  aliceDepositCid <- submit acme do createCmd aliceDeposit
+  ajaxDepositCid <- submit csd do createCmd ajaxDeposit
+  bobDepositCid <- submit ajax do createCmd bobDeposit
+
+  custodialDvpCid <- submit csd $
+    -- Propose a Dvp between the legal owners of the assets (Acme and Ajax) and corresponding allocations to the
+    -- the beneficial owners (Alice and Bob)
+    createCmd CustodialDvpSettlementRule with masterAgreement *>
+    createCmd CustodialDvp with
+      dvp
+      beneficiary1 = alice
+      beneficiary2 = bob
+
+  submit csd do
+    -- As the legal owners of the assets, Acme and Ajax must settle with eachother
+    createCmd SettlementInstruction with
+      masterAgreement
+      tradeId
+      asset = twoThousandDollars
+      steps = [ajaxToAcmeSettlement]
+      observers = Set.empty
+    createCmd SettlementInstruction with
+      masterAgreement
+      tradeId
+      asset = morleyStock
+      steps = [acmeToAjaxSettlement]
+      observers = Set.empty
+    pure ()
+
+  submit csd do
+    -- Allocation changes are required to reflect changes in beneficial ownership
+    createCmd AllocationChangeInstruction with
+      asset = morleyStock
+      masterAgreement
+      tradeId
+      deallocations = [aliceDeallocation]
+      allocations = [bobAllocation]
+      observers = Set.empty
+    createCmd AllocationChangeInstruction with
+      asset = twoThousandDollars
+      masterAgreement
+      tradeId
+      deallocations = [bobDeallocation]
+      allocations = [aliceAllocation]
+      observers = Set.empty
+    pure ()
+
+  deliverySettlementCid <- submit acme $ exerciseByKeyCmd
+    @SettlementInstruction
+    (masterAgreementId, tradeId, morleyId)
+    SettlementInstruction_AllocateNext with depositCid = acmeDepositCid, ctrl = acme
+  paymentSettlementCid <- submit ajax $ exerciseByKeyCmd
+    @SettlementInstruction
+    (masterAgreementId, tradeId, audId)
+    SettlementInstruction_AllocateNext with depositCid = ajaxDepositCid, ctrl = ajax
+
+  submit acme $ exerciseByKeyCmd
+    @AllocationChangeInstruction
+    (masterAgreementId, tradeId, morleyId)
+    AllocationChangeInstruction_ConfirmNextDeallocation with depositCid = aliceDepositCid
+  deliveryAllocationCid <- submit ajax $ exerciseByKeyCmd
+    @AllocationChangeInstruction
+    (masterAgreementId, tradeId, morleyId)
+    AllocationChangeInstruction_ConfirmNextAllocation
+
+  submit ajax $ exerciseByKeyCmd
+    @AllocationChangeInstruction
+    (masterAgreementId, tradeId, audId)
+    AllocationChangeInstruction_ConfirmNextDeallocation with depositCid = bobDepositCid
+  paymentAllocationCid <- submit acme $ exerciseByKeyCmd
+    @AllocationChangeInstruction
+    (masterAgreementId, tradeId, audId)
+    AllocationChangeInstruction_ConfirmNextAllocation
+
+  submit acme do
+    exerciseByKeyCmd @CustodialDvpSettlementRule masterAgreementId CustodialDvpSettlementRule_Process with
+      custodialDvpCid
+      paymentInstructionCids = [CustodialTransfer paymentAllocationCid (Some paymentSettlementCid)]
+      deliveryInstructionCids = [CustodialTransfer deliveryAllocationCid (Some deliverySettlementCid)]
+      ctrl = acme
+  pure ()
+
+{-
+The concept of asset lifecycling, introduced in FinLib, allows for an asset deposit to be transformed over time based
+on the effects defined by the asset ID's signatories (typically the issuer of the asset). For example, corporate actions
+such as an equity cash dividend, stock split or rights issue. These lifecycling effects archive existing deposits and
+create new deposits as a result. The problem is how to perform these effects across different accounts in the hierarchy
+atomically while maintaining privacy. In this sample, Alice and Bob both hold shares in Morley and a cash dividend of
+$2 per share needs to be processed. The effects of the lifecycling process will be to archive their existing Morley
+shares, create cash deposits of the appropriate value and create new Morley shares (with updated version number). Using
+a new version number for the asset ID prevents the dividend from being processed multiple times (i.e. double spending).
+Alice and Bob cannot unilaterally lifecycle their `AssetDeposits` as otherwise this change would not be reflected in
+the `AssetDeposit`s belonging to their custodians (Acme and Ajax). Instead, Alice and Bob submit lifecycle instructions
+to Ajax, selecting the particular `AssetDeposit` to be lifecycled. In turn, Acme submits a lifecycle instruction to
+Acme. This lifecycle instruction contains references to Alice's and Bob's instructions, enabling all these effects to
+be processed in a single transaction. This design also makes use of Daml's sub-transaction privacy. Since the
+lifecycling of Alice and Bob's deposits occur in two different sub-transactions, neither Alice or Bob witness the
+lifecycle effects that have taken place in eachother's accounts.
+-}
+example6 : Script ()
+example6 = do
+  morley <- allocateParty "Morley Corporation"
+  csd <- allocateParty "Central Securities Depository"
+  acme <- allocateParty "Acme Custodian"
+  ajax <- allocateParty "Ajax Custodian"
+  alice <- allocateParty "Alice"
+  bob <- allocateParty "Bob"
+
+  let
+    morleyId = Id with signatories = Set.fromList [morley], label = "MLY Class A Shares", version = 0
+    morleyId' = morleyId with version = 1
+    morleyStock = Asset with id = morleyId, quantity = 50.0
+    audId = Id with signatories = Set.fromList [], label = "Australian Dollar", version = 0
+    twoDollars = Asset with id = audId, quantity = 2.0
+
+    acmeAccountId = Id with signatories = Set.fromList [csd], label = "Acme@CSD", version = 0
+    acmeAccount = Account with id = acmeAccountId, provider = csd, owner = acme
+    acmeDeposit = AssetDeposit with account = acmeAccount, asset = morleyStock, observers = Set.empty
+    acmeCustodianRole = CustodianRole with account = acmeAccount, observers = Set.empty
+
+    ajaxAccountId = Id with signatories = Set.fromList [acme], label = "Ajax@Acme", version = 0
+    ajaxAccount = Account with id = ajaxAccountId, provider = acme, owner = ajax
+    ajaxDeposit = AssetDeposit with account = ajaxAccount, asset = morleyStock, observers = Set.empty
+    ajaxCustodianRole = CustodianRole with account = ajaxAccount, observers = Set.empty
+
+    aliceAccountId = Id with signatories = Set.fromList [ajax], label = "Alice@Ajax", version = 0
+    aliceAccount = Account with id = aliceAccountId, provider = ajax, owner = alice
+    aliceDeposit = AssetDeposit with
+      account = aliceAccount
+      asset = morleyStock with quantity = 30.0
+      observers = Set.fromList [acme]
+
+    bobAccountId = Id with signatories = Set.fromList [ajax], label = "Bob@Ajax", version = 0
+    bobAccount = Account with id = bobAccountId, provider = ajax, owner = bob
+    bobDeposit = AssetDeposit with
+      account = bobAccount
+      asset = morleyStock with quantity = 20.0
+      observers = Set.fromList [acme]
+
+    dividendEffects = LifecycleEffects with
+      id = morleyId
+      label = "Dividend payment"
+      consuming = []
+      effects = [Asset morleyId' 1.0, twoDollars]
+      observers = Set.fromList [csd, acme, ajax, alice, bob]
+
+  dividendEffectsCid <- submit morley do createCmd dividendEffects
+
+  -- Acme is the legal owner and is therefore provided an `AssetLifecycleRule`, which allows Acme to freely lifecycle
+  -- any assets it holds in its account. Beneficial owners don't have this right and so other contracts are used to enable this.
+  acmeLifecycleRuleCid <- submit csd do createCmd AssetLifecycleRule with account = acmeAccount
+
+  acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
+  ajaxCustodianRoleCid <- submit acme do createCmd ajaxCustodianRole
+
+  ajaxCustServiceRequestCid <- submit ajax do createCmd CustodyServiceRequest with account = ajaxAccount, parent = acmeAccount
+  ajaxCustServiceCid <- submit acme do
+    exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = ajaxCustServiceRequestCid
+  submit ajax do
+    exerciseCmd ajaxCustServiceCid CustodyService_SetObservers with newObservers = Set.fromList [csd]
+  ajaxLifecycleRuleCid <- submit acme do createCmd CustodialLifecycleRule with account = ajaxAccount
+
+  aliceCustServiceRequestCid <- submit alice do createCmd CustodyServiceRequest with account = aliceAccount, parent = ajaxAccount
+  aliceCustServiceCid <- submit ajax do
+    exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = aliceCustServiceRequestCid
+  submit alice do
+    exerciseCmd aliceCustServiceCid CustodyService_SetObservers with newObservers = Set.fromList [csd]
+  aliceLifecycleRuleCid <- submit ajax do createCmd CustodialLifecycleRule with account = aliceAccount
+
+  bobCustServiceRequestCid <- submit bob do createCmd CustodyServiceRequest with account = bobAccount, parent = ajaxAccount
+  bobCustServiceCid <- submit ajax do
+    exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = bobCustServiceRequestCid
+  submit bob do
+    exerciseCmd bobCustServiceCid CustodyService_SetObservers with newObservers = Set.fromList [csd]
+  bobLifecycleRuleCid <- submit ajax do createCmd CustodialLifecycleRule with account = bobAccount
+
+  -- For simplicity, we skip using `AllocationChangeInstruction`s to create the deposits atomically
+  acmeDepositCid <- submit csd do createCmd acmeDeposit
+  ajaxDepositCid <- submit acme do createCmd ajaxDeposit
+  aliceDepositCid <- submit ajax do createCmd aliceDeposit
+  bobDepositCid <- submit ajax do createCmd bobDeposit
+
+  -- Alice and Bob submit their requests to lifecycle their assets
+  aliceReqCid <- submit alice do
+    exerciseCmd aliceLifecycleRuleCid CustodialLifecycleRule_CreateInstruction with
+      instruction = CustodialLifecycleInstruction with
+        account = aliceAccount
+        parent = ajaxAccount
+        asset = aliceDeposit.asset
+        depositCid = aliceDepositCid
+        consumingDepositCids = []
+        lifecycleEffectsCid = dividendEffectsCid
+        children = []
+        observers = Set.fromList [acme]
+  bobReqCid <- submit bob do
+    exerciseCmd bobLifecycleRuleCid CustodialLifecycleRule_CreateInstruction with
+      instruction = CustodialLifecycleInstruction with
+        account = bobAccount
+        parent = ajaxAccount
+        asset = bobDeposit.asset
+        depositCid = bobDepositCid
+        consumingDepositCids = []
+        lifecycleEffectsCid = dividendEffectsCid
+        children = []
+        observers = Set.fromList [acme]
+  -- Ajax submits a request to Acme to lifecycle its deposit
+  ajaxInstructionCid <- submit ajax do
+    exerciseCmd ajaxLifecycleRuleCid CustodialLifecycleRule_CreateInstruction with
+      instruction = CustodialLifecycleInstruction with
+        account = ajaxAccount
+        parent = acmeAccount
+        asset = morleyStock
+        depositCid = ajaxDepositCid
+        consumingDepositCids = []
+        lifecycleEffectsCid = dividendEffectsCid
+        children = [aliceAccount, bobAccount]
+        observers = Set.fromList [acme]
+  submit acme do
+    -- As the legal owner, Acme exercises its right to lifecycle the asset
+    exerciseCmd acmeLifecycleRuleCid AssetLifecycle_Process with
+      lifecycleEffectsCid = dividendEffectsCid
+      depositCid = acmeDepositCid
+      consumingDepositCids = []
+      accountIds = None
+    -- In the same transaction, Acme lifecycles the deposits belonging to Ajax, Alice and Bob.
+    exerciseCmd ajaxInstructionCid CustodialLifecycleInstruction_Process
+    pure ()
+  pure ()

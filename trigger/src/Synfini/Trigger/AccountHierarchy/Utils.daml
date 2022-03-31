@@ -1,0 +1,13 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+module Synfini.Trigger.AccountHierarchy.Utils where
+  import DA.Finance.Asset
+  import DA.List
+  import qualified DA.Set as Set
+
+  mergeAssetDeposits : [ContractId AssetDeposit] -> [Decimal] ->  Update [ContractId AssetDeposit]
+  mergeAssetDeposits depositCids quantities = do
+    fixedObserversCids <- mapA (\depositCid -> exercise depositCid AssetDeposit_SetObservers with newObservers = Set.empty) depositCids
+    mergedDepositCid <- exercise (head fixedObserversCids) AssetDeposit_Merge with depositCids = tail fixedObserversCids
+    exercise mergedDepositCid AssetDeposit_Split with quantities

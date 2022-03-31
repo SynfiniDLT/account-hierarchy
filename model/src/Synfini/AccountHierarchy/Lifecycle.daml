@@ -1,0 +1,88 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+module Synfini.AccountHierarchy.Lifecycle where
+
+import DA.Assert ((===))
+import DA.Finance.Asset
+import DA.Finance.Asset.Lifecycle
+import DA.Finance.Asset.Settlement
+import DA.Finance.Types
+import qualified DA.Foldable as F
+import qualified DA.Optional as O
+import DA.Set (Set)
+import qualified DA.Set as Set
+import Synfini.AccountHierarchy.Service
+
+template CustodialLifecycleRule
+  with
+    account : Account
+  where
+    signatory account.id.signatories
+    observer account.owner
+
+    key account.id : Id
+    maintainer key.signatories
+
+    nonconsuming choice CustodialLifecycleRule_CreateInstruction : ContractId CustodialLifecycleInstruction
+      with
+        instruction : CustodialLifecycleInstruction
+      controller account.owner
+      do
+        instruction.account === account
+        create instruction
+
+template CustodialLifecycleInstruction
+  with
+    account : Account
+    parent : Account
+    asset : Asset
+    lifecycleEffectsCid : ContractId LifecycleEffects
+    depositCid : ContractId AssetDeposit
+    consumingDepositCids : [ContractId AssetDeposit]
+    children : [Account]
+    observers : Set Party
+  where
+    signatory account.owner, account.id.signatories
+    observer parent.owner, observers
+
+    key (account.id, asset.id) : (Id, Id)
+    maintainer key._1.signatories
+
+    choice CustodialLifecycleInstruction_Process : [ContractId AssetDeposit]
+      controller parent.owner
+      do
+        (_, custodyService) <- fetchByKey @CustodyService account.id
+        custodyService.parent === parent
+        custodyService.account === account
+
+        deposit <- fetch depositCid
+        deposit.asset === asset
+        deposit.account === account
+        F.forA_ consumingDepositCids $ \consumingDepositCid -> do
+          consumingDeposit <- fetch consumingDepositCid
+          consumingDeposit.account === account
+
+        settlementRuleCid <- create AssetSettlementRule with account, observers = Set.empty, ctrls = Set.empty
+        lifecycleRuleCid <- create AssetLifecycleRule with account
+        lifecycleResults <- exercise lifecycleRuleCid AssetLifecycle_Process with
+          lifecycleEffectsCid
+          depositCid = depositCid
+          consumingDepositCids = consumingDepositCids
+          accountIds = None
+        archive settlementRuleCid
+        archive lifecycleRuleCid
+
+        childResults <- forA children $ \child -> do
+          (_, custService) <- fetchByKey @CustodyService child.id
+          custService.parent === account
+          (childLifecycleCid, childLifecycle) <- fetchByKey @CustodialLifecycleInstruction (child.id, asset.id)
+          newDeposits <- exercise childLifecycleCid CustodialLifecycleInstruction_Process
+          pure (childLifecycle.asset.quantity, newDeposits)
+        custRoleCid <- lookupByKey @CustodianRole account.id
+        if O.isSome custRoleCid then
+          sum (fst <$> childResults) === asset.quantity
+        else
+          children === []
+
+        pure $ lifecycleResults <> concatMap snd childResults
