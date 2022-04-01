@@ -15,6 +15,8 @@ import DA.Set (Set)
 import qualified DA.Set as Set
 import Synfini.AccountHierarchy.Service
 
+-- | Rule to allow an account owner to confirm or reject instructions to allocate (credit) or deallocate (debit) from
+-- their account.
 template AllocationChangeRule
   with
     account : Account
@@ -25,9 +27,10 @@ template AllocationChangeRule
     key account.id : Id
     maintainer key.signatories
 
+    -- | Consent to an allocation into the account.
     nonconsuming choice AllocationChangeRule_ConfirmNextAllocation : ContractId AllocationChangeInstruction
       with
-        allocationChangeInstructionCid : ContractId AllocationChangeInstruction
+        allocationChangeInstructionCid : ContractId AllocationChangeInstruction -- ^ Contract ID of the proposed allocation.
       controller account.owner
       do
         allocationChangeInstruction <- fetch allocationChangeInstructionCid
@@ -35,10 +38,11 @@ template AllocationChangeRule
         (head unconfirmedAllocations).account === account
         exercise allocationChangeInstructionCid AllocationChangeInstruction_ConfirmNextAllocation
 
+    -- | Consent to a deallocation from the account.
     nonconsuming choice AllocationChangeRule_ConfirmNextDeallocation : ContractId AllocationChangeInstruction
       with
-        allocationChangeInstructionCid : ContractId AllocationChangeInstruction
-        depositCid : ContractId AssetDeposit
+        allocationChangeInstructionCid : ContractId AllocationChangeInstruction -- ^ Contract ID of the proposed deallocation.
+        depositCid : ContractId AssetDeposit -- ^ Asset deposit to be archived during processing of the deallocation.
       controller account.owner
       do
         allocationChangeInstruction <- fetch allocationChangeInstructionCid
@@ -46,23 +50,25 @@ template AllocationChangeRule
         (head unconfirmedDeallocations).account === account
         exercise allocationChangeInstructionCid AllocationChangeInstruction_ConfirmNextDeallocation with depositCid
 
+-- | Allocation to a particular account.
 data AllocationDetails = AllocationDetails
   with
-    account : Account
-    confirmed : Bool
+    account : Account -- ^ Account to allocate to.
+    confirmed : Bool -- ^ 'True' if the account signatories have consented to the allocation, otherwise 'False'.
   deriving (Show, Eq)
 
--- | HIDE
 splitAllocations : [AllocationDetails] -> ([AllocationDetails], [AllocationDetails])
 splitAllocations = partition (\allocation -> allocation.confirmed)
 
 allocationSignatories : [AllocationDetails] -> [Party]
 allocationSignatories = concatMap (\detail -> Set.toList detail.account.id.signatories)
 
+-- | Deallocation from a particular account.
 data DeallocationDetails = DeallocationDetails
   with
-   account : Account
-   depositCid : Optional (ContractId AssetDeposit)
+   account : Account -- ^ Account to deallocate from.
+   depositCid : Optional (ContractId AssetDeposit) -- ^ Deposit to be archived. Will be 'Some' if the account
+   -- signatories have consented to the deallocation.
   deriving (Show, Eq)
 
 splitDeallocations : [DeallocationDetails] -> ([DeallocationDetails], [DeallocationDetails])
@@ -93,13 +99,14 @@ getParent account = do
   (_, custodyService) <- fetchByKey @CustodyService account.id
   pure custodyService.parent
 
+-- | A call to allocate and/or deallocate from an account hierarchy.
 template AllocationChangeInstruction
   with
     asset : Asset
-    deallocations : [DeallocationDetails] -- ^ De-allocations from bottom to top of the hierarchy.
+    deallocations : [DeallocationDetails] -- ^ Deallocations from bottom to top of the hierarchy.
     allocations : [AllocationDetails] -- ^ Allocations from top to bottom of the hierarchy.
-    masterAgreement : MasterAgreement
-    tradeId : Id
+    masterAgreement : MasterAgreement -- ^ Master agreement under which this applies.
+    tradeId : Id -- ^ Trade this allocation change is linked to.
     observers : Set Party
   where
     signatory masterAgreement.id.signatories,
@@ -117,6 +124,8 @@ template AllocationChangeInstruction
     let (confirmedDeallocations, unconfirmedDeallocations) = splitDeallocations deallocations
         (confirmedAllocations, unconfirmedAllocations) = splitAllocations allocations
 
+    -- | Account signatories of the next unconfirmed allocation can choose to consent to the allocation change. Can
+    -- only be exercised after all deallocations are confirmed.
     choice AllocationChangeInstruction_ConfirmNextAllocation : ContractId AllocationChangeInstruction
       controller optional Set.empty (\allocation -> allocation.account.id.signatories) (LT.head unconfirmedAllocations)
       do
@@ -124,9 +133,10 @@ template AllocationChangeInstruction
         let nextAllocation = head unconfirmedAllocations
         create this with allocations = confirmedAllocations <> ((nextAllocation with confirmed = True) :: tail unconfirmedAllocations)
 
+    -- | Account signatories of the next unconfirmed deallocation can choose to consent to the allocation change.
     choice AllocationChangeInstruction_ConfirmNextDeallocation : ContractId AllocationChangeInstruction
       with
-        depositCid : ContractId AssetDeposit
+        depositCid : ContractId AssetDeposit -- ^ Deposit to archived during exercise of 'AllocationChangeInstruction_Process'.
       controller optional Set.empty (\deallocation -> deallocation.account.id.signatories) (LT.head unconfirmedDeallocations)
       do
         allocation <- fetch depositCid
@@ -136,6 +146,7 @@ template AllocationChangeInstruction
         let updatedNextDeallocation = nextDeallocation with depositCid = Some depositCid
         create this with deallocations = confirmedDeallocations <> (updatedNextDeallocation :: tail unconfirmedDeallocations)
 
+    -- | Execute the allocation changes.
     choice AllocationChangeInstruction_Process : [ContractId AssetDeposit]
       controller masterAgreement.id.signatories
       do

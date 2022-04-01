@@ -8,10 +8,12 @@ import DA.Finance.Types
 import DA.Set (Set)
 import qualified DA.Set as Set
 
+-- | Agreement between beneficiary and custodian.
 template CustodyService
   with
-    parent : Account
-    account : Account
+    parent : Account -- ^ Account in which the custodian keeps assets of clients for safe-keeping.
+    account : Account -- ^ Account owned by a beneficiary, which is allocated some portion of the assets in the
+      -- parent account.
     observers : Set Party
   where
     signatory account.id.signatories, account.owner, parent.id.signatories
@@ -22,60 +24,69 @@ template CustodyService
     key account.id : Id
     maintainer key.signatories
 
+    -- | Update contract observers.
     choice CustodyService_SetObservers : ContractId CustodyService
       with
-        newObservers : Set Party
+        newObservers : Set Party -- ^ Updated contract observers.
       controller account.owner
       do
         create this with observers = newObservers
 
+-- | A request made to a custodian by a party seeking to act as a beneficiary of assets.
 template CustodyServiceRequest
   with
-    parent : Account
-    account : Account
+    parent : Account -- ^ Account in which the custodian keeps assets of clients for safe-keeping.
+    account : Account -- ^ Account of prospective beneficiary.
   where
     signatory account.owner
     observer parent.id.signatories, parent.provider, parent.owner, account.id.signatories, account.provider
 
+    -- | Accept the request and create the 'CustodyService'.
     choice CustodyServiceRequest_Accept : ContractId CustodyService
       controller account.id.signatories, parent.id.signatories
       do
         create CustodyService with account, parent, observers = Set.empty
 
+    -- | Cancel the request.
     choice CustodyServiceRequest_Cancel : ()
       controller account.owner
       do
         pure ()
 
+    -- | Reject the request.
     choice CustodyServiceRequest_Reject : ()
       controller account.id.signatories, parent.id.signatories
       do
         pure ()
 
+-- | Contract in which the account signatories allow the account owner to delegate beneficial ownership of assets in
+-- the account to other parties.
 template CustodianRole
   with
-    account : Account -- ^ The account provider grants the account owner the ability to act as a custodian i.e.
-    -- delegating beneficial ownership of the assets held in this account to third parties.
-    observers : Set Party
+    account : Account -- ^ Owner of this account can choose to enter 'CustodyService' contracts (with this as the
+    -- 'parent' account).
+    observers : Set Party -- ^ Contract observers.
   where
     signatory account.id.signatories
-    observer account.provider, account.owner
+    observer account.provider, account.owner, observers
 
     key account.id : Id
     maintainer key.signatories
 
+    -- | Accept a request to act as a custodian.
     nonconsuming choice CustodianRole_AcceptServiceRequest : ContractId CustodyService
       with
-        serviceRequestCid : ContractId CustodyServiceRequest
+        serviceRequestCid : ContractId CustodyServiceRequest -- ^ Contract ID of the request.
       controller account.owner
       do
         serviceRequest <- fetch serviceRequestCid
         serviceRequest.parent === account
         exercise serviceRequestCid CustodyServiceRequest_Accept
 
+    -- | Reject a request to act as a custodian.
     nonconsuming choice CustodianRole_RejectServiceRequest : ()
       with
-        serviceRequestCid : ContractId CustodyServiceRequest
+        serviceRequestCid : ContractId CustodyServiceRequest -- ^ Contract ID of the request.
       controller account.owner
       do
         serviceRequest <- fetch serviceRequestCid
