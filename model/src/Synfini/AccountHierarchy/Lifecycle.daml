@@ -14,9 +14,10 @@ import DA.Set (Set)
 import qualified DA.Set as Set
 import Synfini.AccountHierarchy.Service
 
+-- | Rule to allow an account owner to request lifecycling of assets in their account.
 template CustodialLifecycleRule
   with
-    account : Account
+    account : Account -- ^ The account to which this rule applies.
   where
     signatory account.id.signatories
     observer account.owner
@@ -24,6 +25,7 @@ template CustodialLifecycleRule
     key account.id : Id
     maintainer key.signatories
 
+    -- | Create an instruction to lifecycle an asset.
     nonconsuming choice CustodialLifecycleRule_CreateInstruction : ContractId CustodialLifecycleInstruction
       with
         instruction : CustodialLifecycleInstruction
@@ -32,16 +34,17 @@ template CustodialLifecycleRule
         instruction.account === account
         create instruction
 
+-- | A call to execute a corporate action or other lifecycling event on an asset in an account and its child accounts.
 template CustodialLifecycleInstruction
   with
-    account : Account
-    parent : Account
-    asset : Asset
-    lifecycleEffectsCid : ContractId LifecycleEffects
-    depositCid : ContractId AssetDeposit
-    consumingDepositCids : [ContractId AssetDeposit]
-    children : [Account]
-    observers : Set Party
+    account : Account -- ^ Account in which assets are to be lifecycled.
+    parent : Account -- ^ The parent account.
+    asset : Asset -- ^ The asset to be lifecycled
+    lifecycleEffectsCid : ContractId LifecycleEffects -- ^ The lifecycle effects to apply to the asset.
+    depositCid : ContractId AssetDeposit -- ^ Asset deposit to apply lifecycling to.
+    consumingDepositCids : [ContractId AssetDeposit] -- ^ Other asset deposits to be consumed as part of lifecycling.
+    children : [Account] -- ^ Child accounts to apply lifecycle instructions to.
+    observers : Set Party -- ^ Contract observers.
   where
     signatory account.owner, account.id.signatories
     observer parent.owner, observers
@@ -49,6 +52,7 @@ template CustodialLifecycleInstruction
     key (account.id, asset.id) : (Id, Id)
     maintainer key._1.signatories
 
+    -- | Apply the lifecycle instructions to this account and its child accounts.
     choice CustodialLifecycleInstruction_Process : [ContractId AssetDeposit]
       controller parent.owner
       do

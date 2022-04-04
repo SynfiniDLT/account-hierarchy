@@ -20,18 +20,18 @@ import Synfini.AccountHierarchy.Trade
 
 {-
 The following examples demonstrate the design and functionality of the Account Hierarchcy library. It assumes the
-reader is familiar with the basics of the FinLib such as `Account`, `Asset` and `AssetDepoit`.
+reader is familiar with the basics of FinLib such as 'Account', 'Asset' and 'AssetDepoit'.
 -}
 
 {-
 In the simplest possible case, an account hierarchy is setup involving a single custodian. At the top of any account
 hierarchy is the legal owner of assets, sitting beneath this are the beneficial owners. In this case, Acme is the
 legal owner of 50 units of Morley Corporation Stock (MLY), held at the Central Securities Depository (CSD). The CSD
-createsa `CustodianRole` contract for Acme which allows Acme to delegate beneficial ownership of the assets (held in
+createsa 'CustodianRole' contract for Acme which allows Acme to delegate beneficial ownership of the assets (held in
 Acme's account at the CSD) to other parties. A propose-accept workflow is initiated by Alice to request Acme to act as
-a custodian for her. Since Acme has a `CustodianRole` it is able to accept the proposal. As a result, a `CustodyService`
+a custodian for her. Since Acme has a 'CustodianRole' it is able to accept the proposal. As a result, a 'CustodyService'
 contract is created which makes Alice's account a child of Acme's account. This means that any Alice has only
-beneficial ownership of any `AssetDeposit`s held in her account, and these `AssetDeposit`s represent an allocation to
+beneficial ownership of any 'AssetDeposit's held in her account, and these 'AssetDeposit's represent an allocation to
 Alice of some portition of the assets held in Acme's account.
 -}
 example1 : Script ()
@@ -67,17 +67,17 @@ example1 = do
 {-
 In this example we have a multi-level account hierarchy where Acme delegates beneficial ownership to another custodian,
 Ajax. In turn, Ajax grants beneficial ownership to Alice. Through some means (e.g. purchase or transfer), Alice has
-acquired beneficial ownership of an additional 50 shares of Morley. Consequently the `AssetDeposit` contracts must be
+acquired beneficial ownership of an additional 50 shares of Morley. Consequently the 'AssetDeposit' contracts must be
 created at multiple levels in the account hierarchy. The creation of all of these contracts can be done atomically by
-means of an `AllocationChangeInstruction`. This contract requries each custodian to consent to allocate an asset to a
-particular beneficary (by exercising the `AllocationChangeInstruction_ConfirmNextAllocation` choice). In this case, the
-`AllocationChangeInstruction` represents a total increase of 50 Morley shares into the hierarchy.
+means of an 'AllocationChangeInstruction'. This contract requries each custodian to consent to allocate an asset to a
+particular beneficary (by exercising the 'AllocationChangeInstruction_ConfirmNextAllocation' choice). In this case, the
+'AllocationChangeInstruction' represents a total increase of 50 Morley shares into the hierarchy.
 
-It is important to note that in these examples, the signatories of `AssetDeposit`s as the bottom of the hierarchy
+It is important to note that in these examples, the signatories of the 'AssetDeposit's as the bottom of the hierarchy
 include only the direct custodian of the beneficiary, not the ultimate legal owner of the asset. This simplifies the
 examples. The problem with this approach is that custodians at the bottom of the hierarchy may unilaterally create
-`AssetDeposit`s in these accounts without authorization from the legal owner. Depending on the level of trust between
-parties, these `AssetDeposit`s could be signed by all custodians involved. The templates can cater to both trust models.
+'AssetDeposit's in these accounts without authorization from the legal owner. Depending on the level of trust between
+parties, these 'AssetDeposit's could be signed by all custodians involved. The templates can cater to both trust models.
 -}
 example2 : Script ()
 example2 = do
@@ -140,8 +140,8 @@ example2 = do
   submit ajax do
     exerciseByKeyCmd @AllocationChangeInstruction allocationKey AllocationChangeInstruction_ConfirmNextAllocation
 
-  -- Creation of the legally-owned AssetDeposit must be done separately from the `AllocationChangeInstruction`, hence
-  -- the use of the first `createCmd` below. `AllocationChangeInstruction`s only change beneficial (not legal) ownership.
+  -- Creation of the legally-owned AssetDeposit must be done separately from the 'AllocationChangeInstruction', hence
+  -- the use of the first 'createCmd' below. 'AllocationChangeInstruction's only change beneficial (not legal) ownership.
   submit csd do
     createCmd acmeDeposit
     exerciseByKeyCmd @AllocationChangeInstruction allocationKey AllocationChangeInstruction_Process
@@ -368,7 +368,7 @@ example4 = do
   bobCustServiceCid <- submit ajax do
     exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = bobCustServiceRequestCid
 
-  -- For brevity, the deposits are created directly rather than via `AllocationChangeInstruction`s
+  -- For brevity, the deposits are created directly rather than via 'AllocationChangeInstruction's
   submit csd do createCmd acmeMorleyDeposit
   submit csd do createCmd acmeCashDeposit
   submit acme do createCmd ajaxMorleyDeposit
@@ -410,13 +410,13 @@ example4 = do
   pure ()
 
 {-
-The `CustodialDvpSettlementRule` template can be used to implement a Delivery versus payment transaction (DVP) between
+The 'CustodialDvpSettlementRule' template can be used to implement a Delivery versus payment transaction (DVP) between
 two beneficial owners which use different custodians. In this example, Bob is buying 50 Morley shares from Alice at a
 cost of 2000 dollars. Alice employs Acme as her custodian, while Bob employs Ajax. Therefore Acme and Ajax must first
-settle with eachother. This is done via `SettlementInstruction`s (provided by FinLib). Following this,
-`AllocationChangeInstruction` are used to allocate the assets to the correct beneficiaries. The
-`CustodialDvpSettlementRule` template allows both of these actions to be executed in a single, atomic transaction. Note
-that it is also possible to use the `CustodialDvpSettlementRule` to perform a transfer by providing an empty list of
+settle with eachother. This is done via 'SettlementInstruction's (provided by FinLib). Following this,
+'AllocationChangeInstruction' are used to allocate the assets to the correct beneficiaries. The
+'CustodialDvpSettlementRule' template allows both of these actions to be executed in a single, atomic transaction. Note
+that it is also possible to use the 'CustodialDvpSettlementRule' to perform a transfer by providing an empty list of
 payment assets.
 -}
 example5 : Script ()
@@ -501,7 +501,7 @@ example5 = do
   submit bob do
     exerciseCmd bobCustServiceCid CustodyService_SetObservers with newObservers = Set.fromList [acme]
 
-  -- For brevity, the deposits are created directly rather than via `AllocationChangeInstruction`s
+  -- For brevity, the deposits are created directly rather than via 'AllocationChangeInstruction's
   acmeDepositCid <- submit csd do createCmd acmeDeposit
   aliceDepositCid <- submit acme do createCmd aliceDeposit
   ajaxDepositCid <- submit csd do createCmd ajaxDeposit
@@ -594,9 +594,9 @@ atomically while maintaining privacy. In this sample, Alice and Bob both hold sh
 $2 per share needs to be processed. The effects of the lifecycling process will be to archive their existing Morley
 shares, create cash deposits of the appropriate value and create new Morley shares (with updated version number). Using
 a new version number for the asset ID prevents the dividend from being processed multiple times (i.e. double spending).
-Alice and Bob cannot unilaterally lifecycle their `AssetDeposits` as otherwise this change would not be reflected in
-the `AssetDeposit`s belonging to their custodians (Acme and Ajax). Instead, Alice and Bob submit lifecycle instructions
-to Ajax, selecting the particular `AssetDeposit` to be lifecycled. In turn, Acme submits a lifecycle instruction to
+Alice and Bob cannot unilaterally lifecycle their 'AssetDeposits' as otherwise this change would not be reflected in
+the 'AssetDeposit's belonging to their custodians (Acme and Ajax). Instead, Alice and Bob submit lifecycle instructions
+to Ajax, selecting the particular 'AssetDeposit' to be lifecycled. In turn, Acme submits a lifecycle instruction to
 Acme. This lifecycle instruction contains references to Alice's and Bob's instructions, enabling all these effects to
 be processed in a single transaction. This design also makes use of Daml's sub-transaction privacy. Since the
 lifecycling of Alice and Bob's deposits occur in two different sub-transactions, neither Alice or Bob witness the
@@ -651,7 +651,7 @@ example6 = do
 
   dividendEffectsCid <- submit morley do createCmd dividendEffects
 
-  -- Acme is the legal owner and is therefore provided an `AssetLifecycleRule`, which allows Acme to freely lifecycle
+  -- Acme is the legal owner and is therefore provided an 'AssetLifecycleRule', which allows Acme to freely lifecycle
   -- any assets it holds in its account. Beneficial owners don't have this right and so other contracts are used to enable this.
   acmeLifecycleRuleCid <- submit csd do createCmd AssetLifecycleRule with account = acmeAccount
 
@@ -679,7 +679,7 @@ example6 = do
     exerciseCmd bobCustServiceCid CustodyService_SetObservers with newObservers = Set.fromList [csd]
   bobLifecycleRuleCid <- submit ajax do createCmd CustodialLifecycleRule with account = bobAccount
 
-  -- For simplicity, we skip using `AllocationChangeInstruction`s to create the deposits atomically
+  -- For simplicity, we skip using 'AllocationChangeInstruction's to create the deposits atomically
   acmeDepositCid <- submit csd do createCmd acmeDeposit
   ajaxDepositCid <- submit acme do createCmd ajaxDeposit
   aliceDepositCid <- submit ajax do createCmd aliceDeposit

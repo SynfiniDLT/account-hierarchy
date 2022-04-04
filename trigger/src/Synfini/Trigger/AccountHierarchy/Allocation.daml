@@ -1,7 +1,11 @@
 -- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
 -- SPDX-License-Identifier: Apache-2.0
 
-module Synfini.Trigger.AccountHierarchy.Allocation where
+module Synfini.Trigger.AccountHierarchy.Allocation (
+  AllocationChangeRuleTrigger(..),
+  AllocationChangeRuleTrigger_ConfirmNextDeallocations(..),
+  trigger
+) where
 
 import DA.Action (unless, void)
 import DA.Bifunctor (bimap)
@@ -17,19 +21,21 @@ import Daml.Trigger
 import Synfini.AccountHierarchy.Allocation
 import Synfini.Trigger.AccountHierarchy.Utils
 
+-- | Helper contract to group commands into atomic operations in allocation changes.
 template AllocationChangeRuleTrigger
   with
-    sig : Party
+    sig : Party -- ^ Controller of allocation change choices.
   where
     signatory sig
 
     key sig : Party
     maintainer key
 
+    -- | Merge and split the asset deposits as required and asign the resulting deposits to the 'AllocationChangeInstruction's.
     nonconsuming choice AllocationChangeRuleTrigger_ConfirmNextDeallocations : [ContractId AllocationChangeInstruction]
       with
-        instructionCids : [ContractId AllocationChangeInstruction]
-        depositCids : [ContractId AssetDeposit]
+        instructionCids : [ContractId AllocationChangeInstruction] -- ^ Allocation change instructions to assign deposits to.
+        depositCids : [ContractId AssetDeposit] -- ^ The deposits to use for deallocation.
       controller sig
       do
         instructions <- mapA fetch instructionCids

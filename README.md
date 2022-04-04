@@ -60,4 +60,4 @@ daml build --project-root trigger
 
 Please use the [example code](examples/src/Synfini/AccountHierarchy/Examples.daml) to understand the structure of the
 Daml model and how to use the templates. For each example, there is an accompanying diagram found
-[here](examples/diagrams).
+[here](examples/diagrams). The public APIs are documented using doc-comments in the Daml source code.
