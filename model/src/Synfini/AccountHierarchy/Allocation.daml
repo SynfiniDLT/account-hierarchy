@@ -19,7 +19,7 @@ import Synfini.AccountHierarchy.Service
 -- their account.
 template AllocationChangeRule
   with
-    account : Account
+    account : Account -- ^ Account to which this rule applies.
   where
     signatory account.id.signatories
     observer account.owner
