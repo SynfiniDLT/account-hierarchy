@@ -29,10 +29,13 @@ library to model a register of assets, enabling multi-party workflows between cu
 [FinLib](https://github.com/digital-asset/lib-finance) library to support multi-level account hierarchies. The Daml
 model currently contains the following components:
 
-- Relationships between custodians/benefciaries and a representation of the account hierarchy tree (module:
-`Synfini.AccountHierarchy.Service`)
-- Allocation of assets to beneficiaries in the hieararchy (`Synfini.AccountHierarchy.Service`)
-- Asset transfers and Delivery versus Payment transaction (`Synfini.AccountHierarchy.Trade`)
+- Relationships between custodians/benefciaries and encoding of the account hierarchy tree (
+`Synfini.AccountHierarchy.Service` module)
+- Allocation of assets to beneficiaries in the hieararchy (`Synfini.AccountHierarchy.Allocation` module)
+- Asset transfers and Delivery versus Payment transactions (`Synfini.AccountHierarchy.Trade` module)
+
+In addition, the triggers project contains the following:
+- Automated processing of allocation changes to beneficiaries (`Synfini.Trigger.AccountHierarchy.Allocation` module)
 
 ## How to use this project
 
