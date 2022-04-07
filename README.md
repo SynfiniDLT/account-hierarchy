@@ -26,8 +26,8 @@ level which is vital to preserving the privacy of custodians and their customers
 This project is showcase of research and development carried out by the
 [Synfini](https://www2.asx.com.au/connectivity-and-data/dlt-as-a-service) team. It provides a a generic Daml
 library to model a register of assets, enabling multi-party workflows between custodians. It extends the existing
-[FinLib](https://github.com/digital-asset/lib-finance) library to support multi-level account hierarchies. The Daml
-model currently contains the following components:
+[FinLib](https://github.com/digital-asset/lib-finance) library to support multi-level account hierarchies. The core
+Daml model currently contains the following components:
 
 - Relationships between custodians/benefciaries and encoding of the account hierarchy tree (
 `Synfini.AccountHierarchy.Service` module)
@@ -47,10 +47,10 @@ Firstly, build FinLib, which is a dependency of this project:
 daml build --project-root lib-finance/model
 ```
 
-Then build the model:
+Then build the core models:
 
 ```
-daml build --project-root model
+daml build --project-root core
 ```
 
 There is also a triggers module which can be used for automation of workflows, which can be built using:

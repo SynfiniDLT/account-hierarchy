@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 sdk-version: 1.17.1
-name: account-hierarchy
+name: account-hierarchy-core
 source: src
 version: 0.1.0
 dependencies:
