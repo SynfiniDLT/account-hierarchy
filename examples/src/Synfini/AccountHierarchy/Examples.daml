@@ -27,12 +27,12 @@ reader is familiar with the basics of FinLib such as 'Account', 'Asset' and 'Ass
 In the simplest possible case, an account hierarchy is setup involving a single custodian. At the top of any account
 hierarchy is the legal owner of assets, sitting beneath this are the beneficial owners. In this case, Acme is the
 legal owner of 50 units of Morley Corporation Stock (MLY), held at the Central Securities Depository (CSD). The CSD
-createsa 'CustodianRole' contract for Acme which allows Acme to delegate beneficial ownership of the assets (held in
+creates a 'CustodianRole' contract for Acme which allows Acme to delegate beneficial ownership of the assets (held in
 Acme's account at the CSD) to other parties. A propose-accept workflow is initiated by Alice to request Acme to act as
 a custodian for her. Since Acme has a 'CustodianRole' it is able to accept the proposal. As a result, a 'CustodyService'
-contract is created which makes Alice's account a child of Acme's account. This means that any Alice has only
-beneficial ownership of any 'AssetDeposit's held in her account, and these 'AssetDeposit's represent an allocation to
-Alice of some portition of the assets held in Acme's account.
+contract is created which makes Alice's account a child of Acme's account. This means that Alice has only beneficial
+ownership of any 'AssetDeposit's held in her account, and these 'AssetDeposit's represent an allocation to Alice of
+some portition of the assets held in Acme's account.
 -}
 example1 : Script ()
 example1 = do
@@ -73,11 +73,12 @@ means of an 'AllocationChangeInstruction'. This contract requries each custodian
 particular beneficary (by exercising the 'AllocationChangeInstruction_ConfirmNextAllocation' choice). In this case, the
 'AllocationChangeInstruction' represents a total increase of 50 Morley shares into the hierarchy.
 
-It is important to note that in these examples, the signatories of the 'AssetDeposit's as the bottom of the hierarchy
-include only the direct custodian of the beneficiary, not the ultimate legal owner of the asset. This simplifies the
-examples. The problem with this approach is that custodians at the bottom of the hierarchy may unilaterally create
-'AssetDeposit's in these accounts without authorization from the legal owner. Depending on the level of trust between
-parties, these 'AssetDeposit's could be signed by all custodians involved. The templates can cater to both trust models.
+It is important to note that in these examples, the signatories of the 'AssetDeposit's at the bottom of the hierarchy
+include only the direct custodian of the beneficiary (Ajax), not the ultimate legal owner of the asset (Acme). This
+simplifies the examples. The problem with this approach is that custodians at the bottom of the hierarchy may
+unilaterally create 'AssetDeposit's in these accounts without authorization from the legal owner. Depending on the
+level of trust between parties, these 'AssetDeposit's could be signed by all custodians involved. The templates can
+cater to both trust models.
 -}
 example2 : Script ()
 example2 = do
@@ -151,7 +152,7 @@ example2 = do
 In some scenarios it may not be possible to atomitically allocate assets all the way down the account hierarchy. The
 alternative is to split allocation into an initial step where assets are allocated to a "default" or "unallocated"
 account. Assets are held temporarily in this account before another allocation to the desired beneficiary. In the
-following example Morley shares are allocated to Acme's deafult account ("Acme@Acme") before being allocated to
+following example Morley shares are allocated to Acme's default account ("Acme@Acme") before being allocated to
 Alice's account.
 -}
 example3 : Script ()
@@ -243,9 +244,9 @@ example3 = do
   pure ()
 
 {-
-The 'Trade' module provides functionality for Delivery versus Payment (DvP) transactions between two beneficiaries
-within a custody network (domain). This means the parties share a common ancestor account. The 'CustodialDvp' contract
-is used to define the terms of the trade. In this example, Alice and Bob share Acme as their custodian.
+The 'Trade' module provides functionality for Delivery versus Payment (DvP) transactions between two beneficiaries, which
+may or may not share the same legal owner (custodian). In this example, Alice and Bob share Acme as their custodian.
+The 'CustodialDvp' contract is used to define the terms of the trade.
 -}
 
 data SingleDomainDvpProposal_AcceptResult = SingleDomainDvpProposal_AcceptResult
@@ -256,7 +257,7 @@ data SingleDomainDvpProposal_AcceptResult = SingleDomainDvpProposal_AcceptResult
     deliveryInstructionCid : ContractId AllocationChangeInstruction
   deriving (Show, Eq)
 
--- A "helper" contract used to create the necessary contracts for a DvP between two accounts under the same parent
+-- A helper contract used to create the necessary contracts for a DvP between two accounts under the same parent
 template SingleDomainDvpProposal
   with
     tradeId : Id
