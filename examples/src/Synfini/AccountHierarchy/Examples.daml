@@ -242,6 +242,12 @@ example3 = do
       AllocationChangeInstruction_Process
   pure ()
 
+{-
+The 'Trade' module provides functionality for Delivery versus Payment (DvP) transactions between two beneficiaries
+within a custody network (domain). This means the parties share a common ancestor account. The 'CustodialDvp' contract
+is used to define the terms of the trade. In this example, Alice and Bob share Acme as their custodian.
+-}
+
 data SingleDomainDvpProposal_AcceptResult = SingleDomainDvpProposal_AcceptResult
   with
     custodialDvpCid : ContractId CustodialDvp
@@ -250,6 +256,7 @@ data SingleDomainDvpProposal_AcceptResult = SingleDomainDvpProposal_AcceptResult
     deliveryInstructionCid : ContractId AllocationChangeInstruction
   deriving (Show, Eq)
 
+-- A "helper" contract used to create the necessary contracts for a DvP between two accounts under the same parent
 template SingleDomainDvpProposal
   with
     tradeId : Id
