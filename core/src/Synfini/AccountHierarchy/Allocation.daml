@@ -13,7 +13,7 @@ import qualified DA.List.Total as LT
 import qualified DA.Optional as O
 import DA.Set (Set)
 import qualified DA.Set as Set
-import Synfini.AccountHierarchy.Service
+import Synfini.AccountHierarchy.Custody
 
 -- | Rule to allow an account owner to confirm or reject instructions to allocate (credit) or deallocate (debit) from
 -- their account.
@@ -84,20 +84,20 @@ assertIsLeafNode account = do
 
 assertAtHierarchyTop : Account -> Update ()
 assertAtHierarchyTop account = do
-  (_, topCustodyService) <- fetchByKey @CustodyService account.id
-  rootCustodyService <- lookupByKey @CustodyService topCustodyService.parent.id
-  rootCustodyService === None
+  (_, topCustodyAgreement) <- fetchByKey @CustodyAgreement account.id
+  rootCustodyAgreement <- lookupByKey @CustodyAgreement topCustodyAgreement.parent.id
+  rootCustodyAgreement === None
 
 assertSameParent : Account -> Account -> Update ()
 assertSameParent acc1 acc2 = do
-  (_, custodyService1) <- fetchByKey @CustodyService acc1.id
-  (_, custodyService2) <- fetchByKey @CustodyService acc2.id
-  custodyService1.parent === custodyService2.parent
+  (_, custodyAgreement1) <- fetchByKey @CustodyAgreement acc1.id
+  (_, custodyAgreement2) <- fetchByKey @CustodyAgreement acc2.id
+  custodyAgreement1.parent === custodyAgreement2.parent
 
 getParent : Account -> Update Account
 getParent account = do
-  (_, custodyService) <- fetchByKey @CustodyService account.id
-  pure custodyService.parent
+  (_, custodyAgreement) <- fetchByKey @CustodyAgreement account.id
+  pure custodyAgreement.parent
 
 -- | A call to allocate and/or deallocate from an account hierarchy.
 template AllocationChangeInstruction
@@ -152,15 +152,15 @@ template AllocationChangeInstruction
       do
         unless (null deallocations) do
           F.forA_ (zip deallocations (tail deallocations)) $ \(deallocation, nextDeallocation) -> do
-            (_, custodialSerivce) <- fetchByKey @CustodyService deallocation.account.id
+            (_, custodialSerivce) <- fetchByKey @CustodyAgreement deallocation.account.id
             custodialSerivce.parent === nextDeallocation.account
           F.mapA_ (\deallocation -> archive $ O.fromSome deallocation.depositCid) deallocations
           assertIsLeafNode (head deallocations).account
 
         unless (null allocations) do
           F.forA_ (zip allocations (tail allocations)) $ \(allocation, nextAllocation) -> do
-            (_, custodyService) <- fetchByKey @CustodyService nextAllocation.account.id
-            custodyService.parent === allocation.account
+            (_, custodyAgreement) <- fetchByKey @CustodyAgreement nextAllocation.account.id
+            custodyAgreement.parent === allocation.account
           assertIsLeafNode (last allocations).account
 
         case (LT.last deallocations, LT.head allocations) of

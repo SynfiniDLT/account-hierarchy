@@ -12,7 +12,7 @@ import qualified DA.Foldable as F
 import qualified DA.Optional as O
 import DA.Set (Set)
 import qualified DA.Set as Set
-import Synfini.AccountHierarchy.Service
+import Synfini.AccountHierarchy.Custody
 
 -- | Rule to allow an account owner to request lifecycling of assets in their account.
 template CustodialLifecycleRule
@@ -56,9 +56,9 @@ template CustodialLifecycleInstruction
     choice CustodialLifecycleInstruction_Process : [ContractId AssetDeposit]
       controller parent.owner
       do
-        (_, custodyService) <- fetchByKey @CustodyService account.id
-        custodyService.parent === parent
-        custodyService.account === account
+        (_, custodyAgreement) <- fetchByKey @CustodyAgreement account.id
+        custodyAgreement.parent === parent
+        custodyAgreement.account === account
 
         deposit <- fetch depositCid
         deposit.asset === asset
@@ -78,7 +78,7 @@ template CustodialLifecycleInstruction
         archive lifecycleRuleCid
 
         childResults <- forA children $ \child -> do
-          (_, custService) <- fetchByKey @CustodyService child.id
+          (_, custService) <- fetchByKey @CustodyAgreement child.id
           custService.parent === account
           (childLifecycleCid, childLifecycle) <- fetchByKey @CustodialLifecycleInstruction (child.id, asset.id)
           newDeposits <- exercise childLifecycleCid CustodialLifecycleInstruction_Process

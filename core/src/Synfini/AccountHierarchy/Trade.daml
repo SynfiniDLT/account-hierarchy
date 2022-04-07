@@ -16,13 +16,13 @@ import qualified DA.Optional as O
 import qualified DA.Set as Set
 import qualified DA.Traversable as T
 import Synfini.AccountHierarchy.Allocation
-import Synfini.AccountHierarchy.Service
+import Synfini.AccountHierarchy.Custody
 
 -- | DvP transaction between two beneficial owners.
 template CustodialDvp
   with
    dvp : Dvp -- ^ DvP between the legal owners of the assets. If legal ownership does not change then 'dvp.party1' is
-   -- the same as 'dvp.party1' and is the owner of the common parent account between beneficial owners.
+   -- the same as 'dvp.pary2' and is the owner of the common parent account between beneficial owners.
    beneficiary1 : Party -- ^ Beneficiary within custody network of 'dvp.party1'.
    beneficiary2 : Party -- ^ Beneficiary within custody network of 'dvp.party2'.
   where
@@ -66,7 +66,7 @@ template CustodialDvpSettlementRule
       with
         custodialDvpCid : ContractId CustodialDvp -- ^ Custodial DvP trade to be settled
         paymentInstructionCids : [CustodialTransfer] -- ^ Transfer instructions for each payment asset.
-        deliveryInstructionCids : [CustodialTransfer] -- ^ Transfer instructions each delivery asset.
+        deliveryInstructionCids : [CustodialTransfer] -- ^ Transfer instructions for each delivery asset.
         ctrl : Party -- ^ Controller which may be either of the legal owner(s) ('masterAgreement.party1' or
         -- 'masterAgreement.party2').
       controller ctrl
@@ -164,8 +164,8 @@ doCustodialSettlement : MasterAgreement ->
                         (AllocationChangeInstruction, Optional SettlementInstruction) ->
                         Update [ContractId AssetDeposit]
 doCustodialSettlement masterAgreement (sender, senderCustodian) (receiver, receiverCustodian) (allocationChange, settlementOpt) = do
-  (_, lastDeallocationCust) <- fetchByKey @CustodyService (last allocationChange.deallocations).account.id
-  (_, firstAllocationCust) <- fetchByKey @CustodyService (head allocationChange.allocations).account.id
+  (_, lastDeallocationCust) <- fetchByKey @CustodyAgreement (last allocationChange.deallocations).account.id
+  (_, firstAllocationCust) <- fetchByKey @CustodyAgreement (head allocationChange.allocations).account.id
   -- Sender/receiver must have a common parent or there exists a settlement instruction between their custodians
   case settlementOpt of
     Some settlement -> lastDeallocationCust.parent === (head settlement.steps).senderAccount

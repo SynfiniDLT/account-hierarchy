@@ -1,7 +1,7 @@
 -- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
 -- SPDX-License-Identifier: Apache-2.0
 
-module Synfini.AccountHierarchy.Service where
+module Synfini.AccountHierarchy.Custody where
 
 import DA.Assert ((===))
 import DA.Finance.Types
@@ -9,7 +9,7 @@ import DA.Set (Set)
 import qualified DA.Set as Set
 
 -- | Agreement between beneficiary and custodian.
-template CustodyService
+template CustodyAgreement
   with
     parent : Account -- ^ Account in which the custodian keeps assets of clients for safe-keeping.
     account : Account -- ^ Account owned by a beneficiary, which is allocated some portion of the assets in the
@@ -25,7 +25,7 @@ template CustodyService
     maintainer key.signatories
 
     -- | Update contract observers.
-    choice CustodyService_SetObservers : ContractId CustodyService
+    choice CustodyAgreement_SetObservers : ContractId CustodyAgreement
       with
         newObservers : Set Party -- ^ Updated contract observers.
       controller account.owner
@@ -33,7 +33,7 @@ template CustodyService
         create this with observers = newObservers
 
 -- | A request made to a custodian by a party seeking to act as a beneficiary of assets.
-template CustodyServiceRequest
+template CustodyRequest
   with
     parent : Account -- ^ Account in which the custodian keeps assets of clients for safe-keeping.
     account : Account -- ^ Account of prospective beneficiary.
@@ -41,20 +41,20 @@ template CustodyServiceRequest
     signatory account.owner
     observer parent.id.signatories, parent.provider, parent.owner, account.id.signatories, account.provider
 
-    -- | Accept the request and create the 'CustodyService'.
-    choice CustodyServiceRequest_Accept : ContractId CustodyService
+    -- | Accept the request and create the 'CustodyAgreement'.
+    choice CustodyRequest_Accept : ContractId CustodyAgreement
       controller account.id.signatories, parent.id.signatories
       do
-        create CustodyService with account, parent, observers = Set.empty
+        create CustodyAgreement with account, parent, observers = Set.empty
 
     -- | Cancel the request.
-    choice CustodyServiceRequest_Cancel : ()
+    choice CustodyRequest_Cancel : ()
       controller account.owner
       do
         pure ()
 
     -- | Reject the request.
-    choice CustodyServiceRequest_Reject : ()
+    choice CustodyRequest_Reject : ()
       controller account.id.signatories, parent.id.signatories
       do
         pure ()
@@ -63,7 +63,7 @@ template CustodyServiceRequest
 -- the account to other parties.
 template CustodianRole
   with
-    account : Account -- ^ Owner of this account can choose to enter 'CustodyService' contracts (with this as the
+    account : Account -- ^ Owner of this account can choose to enter 'CustodyAgreement' contracts (with this as the
     -- 'parent' account).
     observers : Set Party -- ^ Contract observers.
   where
@@ -74,21 +74,21 @@ template CustodianRole
     maintainer key.signatories
 
     -- | Accept a request to act as a custodian.
-    nonconsuming choice CustodianRole_AcceptServiceRequest : ContractId CustodyService
+    nonconsuming choice CustodianRole_AcceptServiceRequest : ContractId CustodyAgreement
       with
-        serviceRequestCid : ContractId CustodyServiceRequest -- ^ Contract ID of the request.
+        serviceRequestCid : ContractId CustodyRequest -- ^ Contract ID of the request.
       controller account.owner
       do
         serviceRequest <- fetch serviceRequestCid
         serviceRequest.parent === account
-        exercise serviceRequestCid CustodyServiceRequest_Accept
+        exercise serviceRequestCid CustodyRequest_Accept
 
     -- | Reject a request to act as a custodian.
     nonconsuming choice CustodianRole_RejectServiceRequest : ()
       with
-        serviceRequestCid : ContractId CustodyServiceRequest -- ^ Contract ID of the request.
+        serviceRequestCid : ContractId CustodyRequest -- ^ Contract ID of the request.
       controller account.owner
       do
         serviceRequest <- fetch serviceRequestCid
         serviceRequest.parent === account
-        exercise serviceRequestCid CustodyServiceRequest_Reject
+        exercise serviceRequestCid CustodyRequest_Reject

@@ -15,7 +15,7 @@ import qualified DA.Set as Set
 import Daml.Script
 import Synfini.AccountHierarchy.Allocation
 import Synfini.AccountHierarchy.Lifecycle
-import Synfini.AccountHierarchy.Service
+import Synfini.AccountHierarchy.Custody
 import Synfini.AccountHierarchy.Trade
 
 {-
@@ -29,7 +29,7 @@ hierarchy is the legal owner of assets, sitting beneath this are the beneficial 
 legal owner of 50 units of Morley Corporation Stock (MLY), held at the Central Securities Depository (CSD). The CSD
 creates a 'CustodianRole' contract for Acme which allows Acme to delegate beneficial ownership of the assets (held in
 Acme's account at the CSD) to other parties. A propose-accept workflow is initiated by Alice to request Acme to act as
-a custodian for her. Since Acme has a 'CustodianRole' it is able to accept the proposal. As a result, a 'CustodyService'
+a custodian for her. Since Acme has a 'CustodianRole' it is able to accept the proposal. As a result, a 'CustodyAgreement'
 contract is created which makes Alice's account a child of Acme's account. This means that Alice has only beneficial
 ownership of any 'AssetDeposit's held in her account, and these 'AssetDeposit's represent an allocation to Alice of
 some portition of the assets held in Acme's account.
@@ -56,7 +56,7 @@ example1 = do
 
   acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
 
-  aliceCustServiceRequestCid <- submit alice do createCmd CustodyServiceRequest with account = aliceAccount, parent = acmeAccount
+  aliceCustServiceRequestCid <- submit alice do createCmd CustodyRequest with account = aliceAccount, parent = acmeAccount
   submit acme do
     exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = aliceCustServiceRequestCid
 
@@ -115,17 +115,17 @@ example2 = do
   acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
   ajaxCustodianRoleCid <- submit acme do createCmd ajaxCustodianRole
 
-  ajaxCustServiceRequestCid <- submit ajax do createCmd CustodyServiceRequest with account = ajaxAccount, parent = acmeAccount
+  ajaxCustServiceRequestCid <- submit ajax do createCmd CustodyRequest with account = ajaxAccount, parent = acmeAccount
   ajaxCustServiceCid <- submit acme do
     exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = ajaxCustServiceRequestCid
   submit ajax do
-    exerciseCmd ajaxCustServiceCid CustodyService_SetObservers with newObservers = Set.fromList [csd]
+    exerciseCmd ajaxCustServiceCid CustodyAgreement_SetObservers with newObservers = Set.fromList [csd]
 
-  aliceCustServiceRequestCid <- submit alice do createCmd CustodyServiceRequest with account = aliceAccount, parent = ajaxAccount
+  aliceCustServiceRequestCid <- submit alice do createCmd CustodyRequest with account = aliceAccount, parent = ajaxAccount
   aliceCustServiceCid <- submit ajax do
     exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = aliceCustServiceRequestCid
   submit alice do
-    exerciseCmd aliceCustServiceCid CustodyService_SetObservers with newObservers = Set.fromList [csd]
+    exerciseCmd aliceCustServiceCid CustodyAgreement_SetObservers with newObservers = Set.fromList [csd]
 
   submit csd do
     createCmd AllocationChangeInstruction with
@@ -198,15 +198,15 @@ example3 = do
   ajaxCustodianRoleCid <- submit acme do createCmd ajaxCustodianRole
 
   acmeCustServiceRequestCid <- submit acme do
-    createCmd CustodyServiceRequest with account = acmeDefaultAccount, parent = acmeAccount
+    createCmd CustodyRequest with account = acmeDefaultAccount, parent = acmeAccount
   submit acme do
     exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = acmeCustServiceRequestCid
 
-  ajaxCustServiceRequestCid <- submit ajax do createCmd CustodyServiceRequest with account = ajaxAccount, parent = acmeAccount
+  ajaxCustServiceRequestCid <- submit ajax do createCmd CustodyRequest with account = ajaxAccount, parent = acmeAccount
   ajaxCustServiceCid <- submit acme do
     exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = ajaxCustServiceRequestCid
 
-  aliceCustServiceRequestCid <- submit alice do createCmd CustodyServiceRequest with account = aliceAccount, parent = ajaxAccount
+  aliceCustServiceRequestCid <- submit alice do createCmd CustodyRequest with account = aliceAccount, parent = ajaxAccount
   aliceCustServiceCid <- submit ajax do
     exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = aliceCustServiceRequestCid
 
@@ -364,15 +364,15 @@ example4 = do
   acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
   ajaxCustodianRoleCid <- submit acme do createCmd ajaxCustodianRole
 
-  ajaxCustServiceRequestCid <- submit ajax do createCmd CustodyServiceRequest with account = ajaxAccount, parent = acmeAccount
+  ajaxCustServiceRequestCid <- submit ajax do createCmd CustodyRequest with account = ajaxAccount, parent = acmeAccount
   ajaxCustServiceCid <- submit acme do
     exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = ajaxCustServiceRequestCid
 
-  aliceCustServiceRequestCid <- submit alice do createCmd CustodyServiceRequest with account = aliceAccount, parent = ajaxAccount
+  aliceCustServiceRequestCid <- submit alice do createCmd CustodyRequest with account = aliceAccount, parent = ajaxAccount
   aliceCustServiceCid <- submit ajax do
     exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = aliceCustServiceRequestCid
 
-  bobCustServiceRequestCid <- submit bob do createCmd CustodyServiceRequest with account = bobAccount, parent = ajaxAccount
+  bobCustServiceRequestCid <- submit bob do createCmd CustodyRequest with account = bobAccount, parent = ajaxAccount
   bobCustServiceCid <- submit ajax do
     exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = bobCustServiceRequestCid
 
@@ -499,15 +499,15 @@ example5 = do
   acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
   ajaxCustodianRoleCid <- submit csd do createCmd ajaxCustodianRole
 
-  aliceCustServiceRequestCid <- submit alice do createCmd CustodyServiceRequest with account = aliceAccount, parent = acmeAccount
+  aliceCustServiceRequestCid <- submit alice do createCmd CustodyRequest with account = aliceAccount, parent = acmeAccount
   submit acme do
     exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = aliceCustServiceRequestCid
 
-  bobCustServiceRequestCid <- submit bob do createCmd CustodyServiceRequest with account = bobAccount, parent = ajaxAccount
+  bobCustServiceRequestCid <- submit bob do createCmd CustodyRequest with account = bobAccount, parent = ajaxAccount
   bobCustServiceCid <- submit ajax do
     exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = bobCustServiceRequestCid
   submit bob do
-    exerciseCmd bobCustServiceCid CustodyService_SetObservers with newObservers = Set.fromList [acme]
+    exerciseCmd bobCustServiceCid CustodyAgreement_SetObservers with newObservers = Set.fromList [acme]
 
   -- For brevity, the deposits are created directly rather than via 'AllocationChangeInstruction's
   acmeDepositCid <- submit csd do createCmd acmeDeposit
@@ -666,25 +666,25 @@ example6 = do
   acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
   ajaxCustodianRoleCid <- submit acme do createCmd ajaxCustodianRole
 
-  ajaxCustServiceRequestCid <- submit ajax do createCmd CustodyServiceRequest with account = ajaxAccount, parent = acmeAccount
+  ajaxCustServiceRequestCid <- submit ajax do createCmd CustodyRequest with account = ajaxAccount, parent = acmeAccount
   ajaxCustServiceCid <- submit acme do
     exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = ajaxCustServiceRequestCid
   submit ajax do
-    exerciseCmd ajaxCustServiceCid CustodyService_SetObservers with newObservers = Set.fromList [csd]
+    exerciseCmd ajaxCustServiceCid CustodyAgreement_SetObservers with newObservers = Set.fromList [csd]
   ajaxLifecycleRuleCid <- submit acme do createCmd CustodialLifecycleRule with account = ajaxAccount
 
-  aliceCustServiceRequestCid <- submit alice do createCmd CustodyServiceRequest with account = aliceAccount, parent = ajaxAccount
+  aliceCustServiceRequestCid <- submit alice do createCmd CustodyRequest with account = aliceAccount, parent = ajaxAccount
   aliceCustServiceCid <- submit ajax do
     exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = aliceCustServiceRequestCid
   submit alice do
-    exerciseCmd aliceCustServiceCid CustodyService_SetObservers with newObservers = Set.fromList [csd]
+    exerciseCmd aliceCustServiceCid CustodyAgreement_SetObservers with newObservers = Set.fromList [csd]
   aliceLifecycleRuleCid <- submit ajax do createCmd CustodialLifecycleRule with account = aliceAccount
 
-  bobCustServiceRequestCid <- submit bob do createCmd CustodyServiceRequest with account = bobAccount, parent = ajaxAccount
+  bobCustServiceRequestCid <- submit bob do createCmd CustodyRequest with account = bobAccount, parent = ajaxAccount
   bobCustServiceCid <- submit ajax do
     exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptServiceRequest with serviceRequestCid = bobCustServiceRequestCid
   submit bob do
-    exerciseCmd bobCustServiceCid CustodyService_SetObservers with newObservers = Set.fromList [csd]
+    exerciseCmd bobCustServiceCid CustodyAgreement_SetObservers with newObservers = Set.fromList [csd]
   bobLifecycleRuleCid <- submit ajax do createCmd CustodialLifecycleRule with account = bobAccount
 
   -- For simplicity, we skip using 'AllocationChangeInstruction's to create the deposits atomically
