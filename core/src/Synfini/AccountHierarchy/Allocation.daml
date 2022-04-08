@@ -102,12 +102,12 @@ getParent account = do
 -- | A call to allocate and/or deallocate from an account hierarchy.
 template AllocationChangeInstruction
   with
-    asset : Asset
+    asset : Asset -- ^ Quantity and identifier of the asset to allocate and/or deallocate.
     deallocations : [DeallocationDetails] -- ^ Deallocations from bottom to top of the hierarchy.
     allocations : [AllocationDetails] -- ^ Allocations from top to bottom of the hierarchy.
     masterAgreement : MasterAgreement -- ^ Master agreement under which this applies.
     tradeId : Id -- ^ Trade this allocation change is linked to.
-    observers : Set Party
+    observers : Set Party -- ^ Contract observers.
   where
     signatory masterAgreement.id.signatories,
       deallocationSignatories confirmedDeallocations,
