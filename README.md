@@ -30,7 +30,7 @@ library to model a register of assets, enabling multi-party workflows between cu
 Daml model currently contains the following components:
 
 - Relationships between custodians/benefciaries and encoding of the account hierarchy tree (
-`Synfini.AccountHierarchy.Service` module)
+`Synfini.AccountHierarchy.Custody` module)
 - Allocation of assets to beneficiaries in the hieararchy (`Synfini.AccountHierarchy.Allocation` module)
 - Asset transfers and Delivery versus Payment transactions (`Synfini.AccountHierarchy.Trade` module)
 
