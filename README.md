@@ -41,7 +41,13 @@ In addition, the triggers project contains the following:
 
 Please note: DAML SDK 1.17.1 must be installed prior to running the following steps.
 
-Firstly, build FinLib, which is a dependency of this project:
+Firstly, clone the project including submodules:
+
+```
+git clone https://github.com/SynfiniDLT/account-hierarchy.git --recurse-submodules
+```
+
+Build FinLib, which is a dependency of this project:
 
 ```
 daml build --project-root lib-finance/model
