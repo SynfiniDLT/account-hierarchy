@@ -74,21 +74,21 @@ template CustodianRole
     maintainer key.signatories
 
     -- | Accept a request to act as a custodian.
-    nonconsuming choice CustodianRole_AcceptServiceRequest : ContractId CustodyAgreement
+    nonconsuming choice CustodianRole_AcceptCustodyRequest : ContractId CustodyAgreement
       with
-        serviceRequestCid : ContractId CustodyRequest -- ^ Contract ID of the request.
+        custodyRequestCid : ContractId CustodyRequest -- ^ Contract ID of the request.
       controller account.owner
       do
-        serviceRequest <- fetch serviceRequestCid
-        serviceRequest.parent === account
-        exercise serviceRequestCid CustodyRequest_Accept
+        custodyRequest <- fetch custodyRequestCid
+        custodyRequest.parent === account
+        exercise custodyRequestCid CustodyRequest_Accept
 
     -- | Reject a request to act as a custodian.
-    nonconsuming choice CustodianRole_RejectServiceRequest : ()
+    nonconsuming choice CustodianRole_RejectCustodyRequest : ()
       with
-        serviceRequestCid : ContractId CustodyRequest -- ^ Contract ID of the request.
+        custodyRequestCid : ContractId CustodyRequest -- ^ Contract ID of the request.
       controller account.owner
       do
-        serviceRequest <- fetch serviceRequestCid
-        serviceRequest.parent === account
-        exercise serviceRequestCid CustodyRequest_Reject
+        custodyRequest <- fetch custodyRequestCid
+        custodyRequest.parent === account
+        exercise custodyRequestCid CustodyRequest_Reject

@@ -78,8 +78,8 @@ template CustodialLifecycleInstruction
         archive lifecycleRuleCid
 
         childResults <- forA children $ \child -> do
-          (_, custService) <- fetchByKey @CustodyAgreement child.id
-          custService.parent === account
+          (_, custCustody) <- fetchByKey @CustodyAgreement child.id
+          custCustody.parent === account
           (childLifecycleCid, childLifecycle) <- fetchByKey @CustodialLifecycleInstruction (child.id, asset.id)
           newDeposits <- exercise childLifecycleCid CustodialLifecycleInstruction_Process
           pure (childLifecycle.asset.quantity, newDeposits)
