@@ -1,0 +1,177 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+module Synfini.AccountHierarchy.Allocation where
+
+import DA.Action (unless)
+import DA.Assert ((===))
+import DA.Finance.Asset
+import DA.Finance.Types
+import qualified DA.Foldable as F
+import DA.List
+import qualified DA.List.Total as LT
+import qualified DA.Optional as O
+import DA.Set (Set)
+import qualified DA.Set as Set
+import Synfini.AccountHierarchy.Custody
+
+-- | Rule to allow an account owner to confirm or reject instructions to allocate (credit) or deallocate (debit) from
+-- their account.
+template AllocationChangeRule
+  with
+    account : Account -- ^ Account to which this rule applies.
+  where
+    signatory account.id.signatories
+    observer account.owner
+
+    key account.id : Id
+    maintainer key.signatories
+
+    -- | Consent to an allocation into the account.
+    nonconsuming choice AllocationChangeRule_ConfirmNextAllocation : ContractId AllocationChangeInstruction
+      with
+        allocationChangeInstructionCid : ContractId AllocationChangeInstruction -- ^ Contract ID of the proposed allocation.
+      controller account.owner
+      do
+        allocationChangeInstruction <- fetch allocationChangeInstructionCid
+        let (_, unconfirmedAllocations) = splitAllocations allocationChangeInstruction.allocations
+        (head unconfirmedAllocations).account === account
+        exercise allocationChangeInstructionCid AllocationChangeInstruction_ConfirmNextAllocation
+
+    -- | Consent to a deallocation from the account.
+    nonconsuming choice AllocationChangeRule_ConfirmNextDeallocation : ContractId AllocationChangeInstruction
+      with
+        allocationChangeInstructionCid : ContractId AllocationChangeInstruction -- ^ Contract ID of the proposed deallocation.
+        depositCid : ContractId AssetDeposit -- ^ Asset deposit to be archived during processing of the deallocation.
+      controller account.owner
+      do
+        allocationChangeInstruction <- fetch allocationChangeInstructionCid
+        let (_, unconfirmedDeallocations) = splitDeallocations allocationChangeInstruction.deallocations
+        (head unconfirmedDeallocations).account === account
+        exercise allocationChangeInstructionCid AllocationChangeInstruction_ConfirmNextDeallocation with depositCid
+
+-- | Allocation to a particular account.
+data AllocationDetails = AllocationDetails
+  with
+    account : Account -- ^ Account to allocate to.
+    confirmed : Bool -- ^ 'True' if the account signatories have consented to the allocation, otherwise 'False'.
+  deriving (Show, Eq)
+
+splitAllocations : [AllocationDetails] -> ([AllocationDetails], [AllocationDetails])
+splitAllocations = partition (\allocation -> allocation.confirmed)
+
+allocationSignatories : [AllocationDetails] -> [Party]
+allocationSignatories = concatMap (\detail -> Set.toList detail.account.id.signatories)
+
+-- | Deallocation from a particular account.
+data DeallocationDetails = DeallocationDetails
+  with
+   account : Account -- ^ Account to deallocate from.
+   depositCid : Optional (ContractId AssetDeposit) -- ^ Deposit to be archived. Will be 'Some' if the account
+   -- signatories have consented to the deallocation.
+  deriving (Show, Eq)
+
+splitDeallocations : [DeallocationDetails] -> ([DeallocationDetails], [DeallocationDetails])
+splitDeallocations = partition (\deallocationDetails -> O.isSome deallocationDetails.depositCid)
+
+deallocationSignatories : [DeallocationDetails] -> [Party]
+deallocationSignatories = concatMap (\deallocation -> Set.toList deallocation.account.id.signatories)
+
+assertIsLeafNode : Account -> Update ()
+assertIsLeafNode account = do
+  custodialRole <- lookupByKey @CustodianRole account.id
+  custodialRole === None
+
+assertAtHierarchyTop : Account -> Update ()
+assertAtHierarchyTop account = do
+  (_, topCustodyAgreement) <- fetchByKey @CustodyAgreement account.id
+  rootCustodyAgreement <- lookupByKey @CustodyAgreement topCustodyAgreement.parent.id
+  rootCustodyAgreement === None
+
+assertSameParent : Account -> Account -> Update ()
+assertSameParent acc1 acc2 = do
+  (_, custodyAgreement1) <- fetchByKey @CustodyAgreement acc1.id
+  (_, custodyAgreement2) <- fetchByKey @CustodyAgreement acc2.id
+  custodyAgreement1.parent === custodyAgreement2.parent
+
+getParent : Account -> Update Account
+getParent account = do
+  (_, custodyAgreement) <- fetchByKey @CustodyAgreement account.id
+  pure custodyAgreement.parent
+
+-- | A call to allocate and/or deallocate from an account hierarchy.
+template AllocationChangeInstruction
+  with
+    asset : Asset -- ^ Quantity and identifier of the asset to allocate and/or deallocate.
+    deallocations : [DeallocationDetails] -- ^ Deallocations from bottom to top of the hierarchy.
+    allocations : [AllocationDetails] -- ^ Allocations from top to bottom of the hierarchy.
+    masterAgreement : MasterAgreement -- ^ Master agreement under which this applies.
+    tradeId : Id -- ^ Trade this allocation change is linked to.
+    observers : Set Party -- ^ Contract observers.
+  where
+    signatory masterAgreement.id.signatories,
+      deallocationSignatories confirmedDeallocations,
+      allocationSignatories confirmedAllocations
+    observer masterAgreement.party1,
+      masterAgreement.party2,
+      deallocationSignatories unconfirmedDeallocations,
+      allocationSignatories unconfirmedAllocations,
+      observers
+
+    key (masterAgreement.id, tradeId, asset.id) : (Id, Id, Id)
+    maintainer key._1.signatories
+
+    let (confirmedDeallocations, unconfirmedDeallocations) = splitDeallocations deallocations
+        (confirmedAllocations, unconfirmedAllocations) = splitAllocations allocations
+
+    -- | Account signatories of the next unconfirmed allocation can choose to consent to the allocation change. Can
+    -- only be exercised after all deallocations are confirmed.
+    choice AllocationChangeInstruction_ConfirmNextAllocation : ContractId AllocationChangeInstruction
+      controller optional Set.empty (\allocation -> allocation.account.id.signatories) (LT.head unconfirmedAllocations)
+      do
+        unconfirmedDeallocations === []
+        let nextAllocation = head unconfirmedAllocations
+        create this with allocations = confirmedAllocations <> ((nextAllocation with confirmed = True) :: tail unconfirmedAllocations)
+
+    -- | Account signatories of the next unconfirmed deallocation can choose to consent to the allocation change.
+    choice AllocationChangeInstruction_ConfirmNextDeallocation : ContractId AllocationChangeInstruction
+      with
+        depositCid : ContractId AssetDeposit -- ^ Deposit to archived during exercise of 'AllocationChangeInstruction_Process'.
+      controller optional Set.empty (\deallocation -> deallocation.account.id.signatories) (LT.head unconfirmedDeallocations)
+      do
+        allocation <- fetch depositCid
+        allocation.asset === asset
+        let nextDeallocation = head unconfirmedDeallocations
+        allocation.account === nextDeallocation.account
+        let updatedNextDeallocation = nextDeallocation with depositCid = Some depositCid
+        create this with deallocations = confirmedDeallocations <> (updatedNextDeallocation :: tail unconfirmedDeallocations)
+
+    -- | Execute the allocation changes.
+    choice AllocationChangeInstruction_Process : [ContractId AssetDeposit]
+      controller masterAgreement.id.signatories
+      do
+        unless (null deallocations) do
+          F.forA_ (zip deallocations (tail deallocations)) $ \(deallocation, nextDeallocation) -> do
+            (_, custodialSerivce) <- fetchByKey @CustodyAgreement deallocation.account.id
+            custodialSerivce.parent === nextDeallocation.account
+          F.mapA_ (\deallocation -> archive $ O.fromSome deallocation.depositCid) deallocations
+          assertIsLeafNode (head deallocations).account
+
+        unless (null allocations) do
+          F.forA_ (zip allocations (tail allocations)) $ \(allocation, nextAllocation) -> do
+            (_, custodyAgreement) <- fetchByKey @CustodyAgreement nextAllocation.account.id
+            custodyAgreement.parent === allocation.account
+          assertIsLeafNode (last allocations).account
+
+        case (LT.last deallocations, LT.head allocations) of
+          (Some topDeallocation, Some topAllocation) -> do
+            deallocationParent <- getParent topDeallocation.account
+            allocationParent <- getParent topAllocation.account
+            unless (deallocationParent == allocationParent) do
+              assertAtHierarchyTop topDeallocation.account
+              assertAtHierarchyTop topAllocation.account
+          (Some topDeallocation, None) -> assertAtHierarchyTop topDeallocation.account
+          (None, Some topAllocation) -> assertAtHierarchyTop topAllocation.account
+          (None, None) -> pure ()
+
+        mapA (\step -> create AssetDeposit with account = step.account, asset, observers = Set.empty) allocations

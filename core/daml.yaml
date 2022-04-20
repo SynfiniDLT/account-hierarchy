@@ -1,0 +1,21 @@
+# Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+sdk-version: 1.17.1
+name: account-hierarchy-core
+source: src
+version: 0.1.0
+dependencies:
+  - daml-prim
+  - daml-stdlib
+  - daml-script
+  - ../lib-finance/model/.daml/dist/finlib-2.0.0.dar
+build-options: [
+  "--ghc-option", "-Wall",
+  "--ghc-option", "-Wunused-do-bind",
+  "--ghc-option", "-Wincomplete-uni-patterns",
+  "--ghc-option", "-Wredundant-constraints",
+  "--ghc-option", "-Wmissing-signatures",
+  "--ghc-option", "-Wno-unused-matches",
+  "--ghc-option", "-Wno-orphans"
+  ]

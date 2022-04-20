@@ -1,0 +1,3 @@
+[submodule "lib-finance"]
+	path = lib-finance
+	url = https://github.com/digital-asset/lib-finance

@@ -1,0 +1,92 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+module Synfini.AccountHierarchy.Lifecycle where
+
+import DA.Assert ((===))
+import DA.Finance.Asset
+import DA.Finance.Asset.Lifecycle
+import DA.Finance.Asset.Settlement
+import DA.Finance.Types
+import qualified DA.Foldable as F
+import qualified DA.Optional as O
+import DA.Set (Set)
+import qualified DA.Set as Set
+import Synfini.AccountHierarchy.Custody
+
+-- | Rule to allow an account owner to request lifecycling of assets in their account.
+template CustodialLifecycleRule
+  with
+    account : Account -- ^ The account to which this rule applies.
+  where
+    signatory account.id.signatories
+    observer account.owner
+
+    key account.id : Id
+    maintainer key.signatories
+
+    -- | Create an instruction to lifecycle an asset.
+    nonconsuming choice CustodialLifecycleRule_CreateInstruction : ContractId CustodialLifecycleInstruction
+      with
+        instruction : CustodialLifecycleInstruction
+      controller account.owner
+      do
+        instruction.account === account
+        create instruction
+
+-- | A call to execute a corporate action or other lifecycling event on an asset in an account and its child accounts.
+template CustodialLifecycleInstruction
+  with
+    account : Account -- ^ Account in which assets are to be lifecycled.
+    parent : Account -- ^ The parent account.
+    asset : Asset -- ^ The asset to be lifecycled
+    lifecycleEffectsCid : ContractId LifecycleEffects -- ^ The lifecycle effects to apply to the asset.
+    depositCid : ContractId AssetDeposit -- ^ Asset deposit to apply lifecycling to.
+    consumingDepositCids : [ContractId AssetDeposit] -- ^ Other asset deposits to be consumed as part of lifecycling.
+    children : [Account] -- ^ Child accounts to apply lifecycle instructions to.
+    observers : Set Party -- ^ Contract observers.
+  where
+    signatory account.owner, account.id.signatories
+    observer parent.owner, observers
+
+    key (account.id, asset.id) : (Id, Id)
+    maintainer key._1.signatories
+
+    -- | Apply the lifecycle instructions to this account and its child accounts.
+    choice CustodialLifecycleInstruction_Process : [ContractId AssetDeposit]
+      controller parent.owner
+      do
+        (_, custodyAgreement) <- fetchByKey @CustodyAgreement account.id
+        custodyAgreement.parent === parent
+        custodyAgreement.account === account
+
+        deposit <- fetch depositCid
+        deposit.asset === asset
+        deposit.account === account
+        F.forA_ consumingDepositCids $ \consumingDepositCid -> do
+          consumingDeposit <- fetch consumingDepositCid
+          consumingDeposit.account === account
+
+        settlementRuleCid <- create AssetSettlementRule with account, observers = Set.empty, ctrls = Set.empty
+        lifecycleRuleCid <- create AssetLifecycleRule with account
+        lifecycleResults <- exercise lifecycleRuleCid AssetLifecycle_Process with
+          lifecycleEffectsCid
+          depositCid = depositCid
+          consumingDepositCids = consumingDepositCids
+          accountIds = None
+        archive settlementRuleCid
+        archive lifecycleRuleCid
+
+        childResults <- forA children $ \child -> do
+          (_, custCustody) <- fetchByKey @CustodyAgreement child.id
+          custCustody.parent === account
+          (childLifecycleCid, childLifecycle) <- fetchByKey @CustodialLifecycleInstruction (child.id, asset.id)
+          newDeposits <- exercise childLifecycleCid CustodialLifecycleInstruction_Process
+          pure (childLifecycle.asset.quantity, newDeposits)
+        custRoleCid <- lookupByKey @CustodianRole account.id
+        if O.isSome custRoleCid then
+          sum (fst <$> childResults) === asset.quantity
+        else
+          children === []
+
+        pure $ lifecycleResults <> concatMap snd childResults
