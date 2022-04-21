@@ -14,7 +14,7 @@ poses a significant risk for custodians when transactions are performed across d
 Another consequence is the difficulty for custodians to adapt their legacy systems to offer services in new asset
 classes, such as cryptocurrencies and digitial assets.
 
-Distributed Ledger Technology (DLT) and the Digital Asset Modelling Language [Daml] (https://daml.com) offer a solution
+Distributed Ledger Technology (DLT) and the Digital Asset Modelling Language ([Daml](https://daml.com)) offer a solution
 to the problems posed by existing legacy custodian infrastructure. By storing a register of legal and beneficial
 ownership on a distributed ledger, a single source of truth can be made available to custodians, eliminating the need
 for reconciliation. Daml as a smart contract language can run on the ledger to enforce the rights and obligations of
@@ -29,10 +29,10 @@ library to model a register of assets, enabling multi-party workflows between cu
 [FinLib](https://github.com/digital-asset/lib-finance) library to support multi-level account hierarchies. The core
 Daml model currently contains the following components:
 
-- Relationships between custodians/benefciaries and encoding of the account hierarchy tree (
-`Synfini.AccountHierarchy.Custody` module)
+- Relationships between custodians/benefciaries and encoding of the account hierarchy tree (`Synfini.AccountHierarchy.Custody` module)
 - Allocation of assets to beneficiaries in the hieararchy (`Synfini.AccountHierarchy.Allocation` module)
 - Asset transfers and Delivery versus Payment transactions (`Synfini.AccountHierarchy.Trade` module)
+- Processing of corporate actions and other asset lifecycling events (`Synfini.AccountHierarchy.Lifecycle` module)
 
 In addition, the triggers project contains the following:
 - Automated processing of allocation changes to beneficiaries (`Synfini.Trigger.AccountHierarchy.Allocation` module)
