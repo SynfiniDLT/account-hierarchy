@@ -1,0 +1,28 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+module Synfini.AccountHierarchy.TestUtils where
+
+import Daml.Script
+
+data Parties = Parties
+  with
+    alice : Party
+    bob : Party
+    charlie : Party
+    david : Party
+    eve : Party
+  deriving (Show, Eq)
+
+allocateParties : Script Parties
+allocateParties = Parties <$>
+  allocateParty "Alice" <*>
+  allocateParty "Bob" <*>
+  allocateParty "Charlie" <*>
+  allocateParty "David" <*>
+  allocateParty "Eve"
+
+withParties : (Parties -> Script ()) -> Script ()
+withParties test = do
+  parties <- allocateParties
+  test parties
