@@ -1,0 +1,59 @@
+module Synfini.Trigger.AccountHierarchy.Lifecycle where
+
+-- import DA.Finance.Asset
+-- import DA.Finance.Types
+-- import DA.List
+-- import qualified DA.Set as Set
+-- import DA.Map (Map)
+-- import qualified DA.Map as Map
+-- import Daml.Trigger
+-- import Synfini.AccountHierarchy.Lifecycle
+
+-- data LifeCycleState = LifeCycleState
+--   with
+--     unallocatedDeposits : Map Id (Map Id [(ContractId AssetDeposit, AssetDeposit)])
+--     lifeCycleRequests : [(ContractId CustodialLifeCycleRequest, CustodialLifeCycleRequest)]
+--   deriving (Show, Eq)
+
+-- groupOnWithKey : (a -> k) -> [a] -> Map k [a]
+-- groupOnWithKey getKey l = Map.fromList $ (\group -> (getKey (head group), group)) <$> groupOn getKey l
+
+-- initialiseLifeCycleState : TriggerInitializeA LifeCycleState
+-- initialiseLifeCycleState = do
+--   lifeCycleInstructions <- query @CustodialLifeCycleInstruction
+--   let allocatedDepositCids = Set.fromList $ concatMap
+--         (\(_, lifeCycleInstruction) -> lifeCycleInstruction.depositCid :: lifeCycleInstruction.consumingDepositCids)
+--         lifeCycleInstructions
+--   deposits <- query @AssetDeposit
+--   let unallocatedDeposits = filter (\(depositCid, _) -> not $ depositCid `Set.member` allocatedDepositCids) deposits
+--   let unallocatedDepositsGroupedByAssetId = groupOnWithKey (\(_, deposit) -> deposit.asset.id) unallocatedDeposits
+--   let unallocatedDepositsGrouped = (groupOnWithKey (\(_, deposit) -> deposit.account.id)) <$> unallocatedDepositsGroupedByAssetId
+--   lifeCycleRequests <- query @CustodialLifeCycleRequest
+--   pure LifeCycleState with
+--     unallocatedDeposits = unallocatedDepositsMap
+--     lifeCycleRequests
+
+-- updateLifeCycleState : Message -> TriggerUpdateA LifeCycleState ()
+-- updateLifeCycleState = undefined
+
+-- mergeRequiredDeposits : Asset -> TriggerA LifeCycleState (Optional (ContractId AssetDeposit))
+
+-- lifeCycleRule : Party -> TriggerA LifeCycleState ()
+-- lifeCycleRule provider = do
+--   state <- get
+--   case state.lifeCycleRequests of
+--     [] -> pure ()
+--     (requestCid, request) :: remRequests -> do
+--       lifecycleEffectsOpt <- queryContractId request.lifecycleEffectsCid
+--       case lifecycleEffectsOpt of
+--         None -> dedupExerciseByKey request.account.id CustodialLifecycleRule_RejectRequest with requestCid
+--         Some lifecycleEffects -> do
+
+
+-- trigger : Trigger LifeCycleState
+-- trigger = Trigger with
+--   initialize = initialiseLifeCycleState
+--   updateState = updateLifeCycleState
+--   rule = lifeCycleRule
+--   registeredTemplates = RegisteredTemplates [registeredTemplate @AssetDeposit, registeredTemplate @CustodialLifeCycleRequest]
+--   heartbeat = None
