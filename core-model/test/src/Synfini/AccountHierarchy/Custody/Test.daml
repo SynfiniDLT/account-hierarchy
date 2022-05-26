@@ -24,10 +24,10 @@ acc sigs provider owner =
 test_CustodyAgreement_signatories : Script ()
 test_CustodyAgreement_signatories = withParties $ \parties -> do
   let custodyAgreement = CustodyAgreement with
-        parent = acc parties.david parties.bob parties.bob
-        account = acc parties.alice parties.bob parties.charlie
+        parent = acc parties.alice parties.charlie parties.charlie
+        account = acc parties.bob parties.charlie parties.charlie
         observers = Set.fromList [parties.eve]
-  Set.fromList (signatory custodyAgreement) === Set.fromList [parties.alice, parties.charlie, parties.david]
+  Set.fromList (signatory custodyAgreement) === Set.fromList [parties.alice, parties.bob]
 
 test_CustodyAgreement_observers : Script ()
 test_CustodyAgreement_observers = withParties $ \parties -> do
@@ -51,7 +51,7 @@ test_CustodyAgreement_SetObservers = withParties $ \parties -> do
   let custodyAgreement = CustodyAgreement with
         parent = acc parties.alice parties.alice parties.alice
         account = acc parties.alice parties.alice parties.bob
-        observers = Set.fromList [parties.charlie]
+        observers = Set.fromList [parties.bob, parties.charlie]
   custodyAgreementCid <- submitMulti [parties.alice, parties.bob] [] do createCmd custodyAgreement
   submitMustFail parties.alice do
     exerciseCmd custodyAgreementCid CustodyAgreement_SetObservers with newObservers = Set.fromList [parties.david]
@@ -59,3 +59,31 @@ test_CustodyAgreement_SetObservers = withParties $ \parties -> do
     exerciseCmd custodyAgreementCid CustodyAgreement_SetObservers with newObservers = Set.fromList [parties.david]
   [(_, newCustodyAgreement)] <- query parties.alice
   newCustodyAgreement === custodyAgreement with observers = Set.fromList [parties.david]
+
+test_CustodyRequest_signatories : Script ()
+test_CustodyRequest_signatories = withParties $ \parties -> do
+  let account1 = acc [parties.alice] parties.bob parties.bob
+  let account2 = acc [parties.charlie] parties.david parties.david
+  let custodyRequest = CustodyRequest with
+        parent = account2
+        account = account1
+  Set.fromList (signatory custodyRequest) === Set.fromList [parties.alice]
+
+test_CustodyRequest_Accept : Script ()
+test_CustodyRequest_Accept = withParties $ \parties -> do
+  let account1 = acc [parties.alice] parties.bob parties.bob
+  let account2 = acc [parties.charlie] parties.bob parties.bob
+  let custodyRequest = CustodyRequest with
+        parent = account2
+        account = account1
+  custodyRequestCid <- submit parties.alice do createCmd custodyRequest
+  submitMultiMustFail [parties.alice, parties.bob, parties.david] [parties.alice, parties.bob, parties.david] do
+    exerciseCmd custodyRequestCid CustodyRequest_Accept
+  submit parties.charlie do
+    exerciseCmd custodyRequestCid CustodyRequest_Accept
+  custodyAgreements <- fmap snd <$> query parties.charlie
+  let expectedCustodyAgreement = CustodyAgreement with
+        parent = account2
+        account = account1
+        observers = Set.empty
+  custodyAgreements === [expectedCustodyAgreement]

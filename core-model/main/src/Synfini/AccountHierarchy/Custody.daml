@@ -16,7 +16,7 @@ template CustodyAgreement
       -- parent account.
     observers : Set Party
   where
-    signatory account.id.signatories, account.owner, parent.id.signatories
+    signatory account.id.signatories, parent.id.signatories
     observer observers
 
     ensure account.provider == parent.owner
@@ -38,24 +38,24 @@ template CustodyRequest
     parent : Account -- ^ Account in which the custodian keeps assets of clients for safe-keeping.
     account : Account -- ^ Account of prospective beneficiary.
   where
-    signatory account.owner
-    observer parent.id.signatories, parent.provider, parent.owner, account.id.signatories, account.provider
+    signatory account.id.signatories
+    observer parent.id.signatories
 
     -- | Accept the request and create the 'CustodyAgreement'.
     choice CustodyRequest_Accept : ContractId CustodyAgreement
-      controller account.id.signatories, parent.id.signatories
+      controller parent.id.signatories
       do
         create CustodyAgreement with account, parent, observers = Set.empty
 
     -- | Cancel the request.
     choice CustodyRequest_Cancel : ()
-      controller account.owner
+      controller account.id.signatories
       do
         pure ()
 
     -- | Reject the request.
     choice CustodyRequest_Reject : ()
-      controller account.id.signatories, parent.id.signatories
+      controller parent.id.signatories
       do
         pure ()
 
