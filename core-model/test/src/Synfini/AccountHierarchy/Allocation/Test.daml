@@ -1,0 +1,109 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+module Synfini.AccountHierarchy.Allocation.Test where
+
+import DA.Assert ((===))
+import DA.Finance.Asset
+import DA.Finance.Types
+import qualified DA.Set as Set
+import Daml.Script
+import Synfini.AccountHierarchy.Allocation
+import Synfini.AccountHierarchy.Custody
+import Synfini.AccountHierarchy.TestUtils
+
+test_AllocationChangeInstruction_observers : Script ()
+test_AllocationChangeInstruction_observers = withParties $ \parties -> do
+  let deallocation = DeallocationDetails with
+        account = acc parties.alice parties.fred parties.fred
+        depositCid = None
+  let allocation = AllocationDetails with
+        account = acc parties.bob parties.fred parties.fred
+        confirmed = False
+  let asset = Asset with
+        id = Id Set.empty "a" 0
+        quantity = 1.0
+  let masterAgreement = MasterAgreement with
+        id = Id (Set.fromList [parties.fred]) "m" 0
+        party1 = parties.charlie
+        party2 = parties.david
+  let allocationChangeInstruction = AllocationChangeInstruction with
+        asset
+        masterAgreement
+        tradeId = Id (Set.fromList [parties.fred]) "t" 0
+        deallocations = [deallocation]
+        allocations = [allocation]
+        observers = Set.fromList [parties.eve]
+  Set.fromList (observer allocationChangeInstruction) === Set.fromList [
+      parties.alice,
+      parties.bob, 
+      parties.charlie,
+      parties.david,
+      parties.eve
+    ]
+
+account_ab, account_bc : Parties -> Account
+account_ab parties = acc parties.alice parties.alice parties.bob
+account_bc parties = acc parties.bob parties.bob parties.charlie
+
+assetId_x, assetId_y : Id
+assetId_x = Id with
+  signatories = Set.empty
+  label = "x"
+  version = 0
+assetId_y = Id with
+  signatories = Set.empty
+  label = "y"
+  version = 0
+
+deposit_bc_x, deposit_bc_y : Parties -> Decimal -> AssetDeposit
+deposit_bc_x parties quantity = AssetDeposit with
+  asset = Asset with
+    id = assetId_x
+    quantity
+  account = account_bc parties
+  observers = Set.fromList [parties.alice, parties.bob, parties.charlie, parties.david, parties.eve, parties.fred]
+deposit_bc_y parties quantity = (deposit_bc_x parties quantity) with asset.id = assetId_y
+
+test_AllocationChangeInstruction_singleDeallocation : Script ()
+test_AllocationChangeInstruction_singleDeallocation = withParties $ \parties -> do
+  let custodyAgreement = CustodyAgreement with
+        parent = account_ab parties
+        account = account_bc parties
+        observers = Set.fromList [parties.charlie]
+  let deallocation = DeallocationDetails with
+        account = account_bc parties
+        depositCid = None
+  let deposit_bc_x_1 = deposit_bc_x parties 1.0
+  let masterAgreement = MasterAgreement with
+        id = Id (Set.fromList [parties.alice]) "m" 0
+        party1 = parties.charlie
+        party2 = parties.david
+  let allocationChangeInstruction = AllocationChangeInstruction with
+        asset = deposit_bc_x_1.asset
+        masterAgreement
+        tradeId = Id (Set.fromList []) "t" 0
+        deallocations = [deallocation]
+        allocations = []
+        observers = Set.empty
+
+  submitMulti [parties.alice, parties.bob] [] do createCmd custodyAgreement
+  depositCid <- submit parties.bob do createCmd (deposit_bc_x parties 1.0)
+  depositCid_badQuantity <- submit parties.bob do createCmd (deposit_bc_x parties 1.1)
+  depositCid_badId <- submit parties.bob do createCmd (deposit_bc_y parties 1.0)
+
+  submit parties.alice do createCmd allocationChangeInstruction
+  submitMustFail parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = depositCid_badQuantity
+  submitMustFail parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = depositCid_badId
+  submit parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = depositCid
+  result <- submit parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_Process
+  result === []
+  deposits <- fmap fst <$> query @AssetDeposit (stakeholder allocationChangeInstruction)
+  filter (\cid -> cid /= depositCid_badQuantity && cid /= depositCid_badId) deposits === []

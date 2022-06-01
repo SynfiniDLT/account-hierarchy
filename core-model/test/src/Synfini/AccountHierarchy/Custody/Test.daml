@@ -10,17 +10,6 @@ import Daml.Script
 import Synfini.AccountHierarchy.Custody
 import Synfini.AccountHierarchy.TestUtils
 
-acc : IsParties p => p -> Party -> Party -> Account
-acc sigs provider owner =
-  let sigsSet = Set.fromList $ toParties sigs in
-  Account with
-    id = Id with
-      label = "signatories: " <> show sigsSet <> ", provider: " <> show provider <> ", owner: " <> show owner
-      signatories = sigsSet
-      version = 0
-    owner
-    provider
-
 test_CustodyAgreement_signatories : Script ()
 test_CustodyAgreement_signatories = withParties $ \parties -> do
   let custodyAgreement = CustodyAgreement with

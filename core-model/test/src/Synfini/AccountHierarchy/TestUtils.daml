@@ -3,6 +3,8 @@
 
 module Synfini.AccountHierarchy.TestUtils where
 
+import DA.Finance.Types
+import qualified DA.Set as Set
 import Daml.Script
 
 data Parties = Parties
@@ -12,6 +14,7 @@ data Parties = Parties
     charlie : Party
     david : Party
     eve : Party
+    fred : Party
   deriving (Show, Eq)
 
 allocateParties : Script Parties
@@ -20,9 +23,21 @@ allocateParties = Parties <$>
   allocateParty "Bob" <*>
   allocateParty "Charlie" <*>
   allocateParty "David" <*>
-  allocateParty "Eve"
+  allocateParty "Eve" <*>
+  allocateParty "Fred"
 
 withParties : (Parties -> Script ()) -> Script ()
 withParties test = do
   parties <- allocateParties
   test parties
+
+acc : IsParties p => p -> Party -> Party -> Account
+acc sigs provider owner =
+  let sigsSet = Set.fromList $ toParties sigs in
+  Account with
+    id = Id with
+      label = "signatories: " <> show sigsSet <> ", provider: " <> show provider <> ", owner: " <> show owner
+      signatories = sigsSet
+      version = 0
+    owner
+    provider

@@ -124,6 +124,11 @@ template AllocationChangeInstruction
     let (confirmedDeallocations, unconfirmedDeallocations) = splitDeallocations deallocations
         (confirmedAllocations, unconfirmedAllocations) = splitAllocations allocations
 
+    choice AllocationChangeInstruction_Archive : ()
+      controller masterAgreement.id.signatories
+      do
+        pure ()
+
     -- | Account signatories of the next unconfirmed allocation can choose to consent to the allocation change. Can
     -- only be exercised after all deallocations are confirmed.
     choice AllocationChangeInstruction_ConfirmNextAllocation : ContractId AllocationChangeInstruction
