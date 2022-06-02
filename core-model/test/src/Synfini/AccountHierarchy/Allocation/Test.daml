@@ -42,9 +42,10 @@ test_AllocationChangeInstruction_observers = withParties $ \parties -> do
       parties.eve
     ]
 
-account_ab, account_bc : Parties -> Account
+account_ab, account_bc, account_cd : Parties -> Account
 account_ab parties = acc parties.alice parties.alice parties.bob
 account_bc parties = acc parties.bob parties.bob parties.charlie
+account_cd parties = acc parties.charlie parties.charlie parties.david
 
 assetId_x, assetId_y : Id
 assetId_x = Id with
@@ -56,13 +57,14 @@ assetId_y = Id with
   label = "y"
   version = 0
 
-deposit_bc_x, deposit_bc_y : Parties -> Decimal -> AssetDeposit
+deposit_bc_x, deposit_cd_x, deposit_bc_y : Parties -> Decimal -> AssetDeposit
 deposit_bc_x parties quantity = AssetDeposit with
   asset = Asset with
     id = assetId_x
     quantity
   account = account_bc parties
   observers = Set.fromList [parties.alice, parties.bob, parties.charlie, parties.david, parties.eve, parties.fred]
+deposit_cd_x parties quantity = (deposit_bc_x parties quantity) with account = account_cd parties
 deposit_bc_y parties quantity = (deposit_bc_x parties quantity) with asset.id = assetId_y
 
 test_AllocationChangeInstruction_singleDeallocation : Script ()
@@ -107,3 +109,56 @@ test_AllocationChangeInstruction_singleDeallocation = withParties $ \parties -> 
   result === []
   deposits <- fmap fst <$> query @AssetDeposit (stakeholder allocationChangeInstruction)
   filter (\cid -> cid /= depositCid_badQuantity && cid /= depositCid_badId) deposits === []
+
+test_AllocationChangeInstruction_multipleDeallocation : Script ()
+test_AllocationChangeInstruction_multipleDeallocation = withParties $ \parties -> do
+  let custodyAgreement1 = CustodyAgreement with
+        parent = account_ab parties
+        account = account_bc parties
+        observers = Set.fromList [parties.alice]
+  let custodyAgreement2 = CustodyAgreement with
+        parent = account_bc parties
+        account = account_cd parties
+        observers = Set.fromList [parties.alice]
+  let deallocation1 = DeallocationDetails with
+        account = account_bc parties
+        depositCid = None
+  let deallocation2 = DeallocationDetails with
+        account = account_cd parties
+        depositCid = None
+  let deposit_bc_x_1 = deposit_bc_x parties 1.0
+  let deposit_cd_x_1 = deposit_cd_x parties 1.0
+  let masterAgreement = MasterAgreement with
+        id = Id (Set.fromList [parties.alice]) "m" 0
+        party1 = parties.charlie
+        party2 = parties.david
+  let allocationChangeInstruction = AllocationChangeInstruction with
+        asset = deposit_bc_x_1.asset
+        masterAgreement
+        tradeId = Id (Set.fromList []) "t" 0
+        deallocations = [deallocation2, deallocation1]
+        allocations = []
+        observers = Set.empty
+
+  submitMulti [parties.alice, parties.bob, parties.charlie, parties.david] [] $
+    createCmd custodyAgreement1 *>
+    createCmd custodyAgreement2
+  depositCid1 <- submit parties.bob do createCmd deposit_bc_x_1
+  depositCid2 <- submit parties.charlie do createCmd deposit_cd_x_1
+
+  submit parties.alice do createCmd allocationChangeInstruction
+  submitMustFail parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = depositCid1
+  submit parties.charlie do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = depositCid2
+  submit parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = depositCid1
+  result <- submit parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_Process
+  result === []
+  deposits <- query @AssetDeposit (stakeholder allocationChangeInstruction)
+  deposits === []
+  pure ()
