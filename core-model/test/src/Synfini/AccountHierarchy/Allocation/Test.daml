@@ -92,7 +92,8 @@ test_AllocationChangeInstruction_singleDeallocation = withParties $ \parties -> 
   submitMulti [parties.alice, parties.bob] [] do createCmd custodyAgreement
   depositCid <- submit parties.bob do createCmd (deposit_bc_x parties 1.0)
   depositCid_badQuantity <- submit parties.bob do createCmd (deposit_bc_x parties 1.1)
-  depositCid_badId <- submit parties.bob do createCmd (deposit_bc_y parties 1.0)
+  depositCid_badAssetId <- submit parties.bob do createCmd (deposit_bc_y parties 1.0)
+  depositCid_badAccount <- submit parties.charlie do createCmd (deposit_cd_x parties 1.0)
 
   submit parties.alice do createCmd allocationChangeInstruction
   submitMustFail parties.bob do
@@ -100,15 +101,18 @@ test_AllocationChangeInstruction_singleDeallocation = withParties $ \parties -> 
       depositCid = depositCid_badQuantity
   submitMustFail parties.bob do
     exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
-      depositCid = depositCid_badId
+      depositCid = depositCid_badAssetId
+  submitMustFail parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = depositCid_badAccount
   submit parties.bob do
     exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
       depositCid = depositCid
   result <- submit parties.alice do
     exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_Process
   result === []
-  deposits <- fmap fst <$> query @AssetDeposit (stakeholder allocationChangeInstruction)
-  filter (\cid -> cid /= depositCid_badQuantity && cid /= depositCid_badId) deposits === []
+  depositCids <- fmap fst <$> query @AssetDeposit (stakeholder allocationChangeInstruction)
+  Set.fromList depositCids === Set.fromList [depositCid_badQuantity, depositCid_badAssetId, depositCid_badAccount]
 
 test_AllocationChangeInstruction_multipleDeallocation : Script ()
 test_AllocationChangeInstruction_multipleDeallocation = withParties $ \parties -> do
