@@ -1,6 +1,8 @@
 -- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
 -- SPDX-License-Identifier: Apache-2.0
 
+{-# LANGUAGE ApplicativeDo #-}
+
 module Synfini.AccountHierarchy.Allocation.Test where
 
 import DA.Assert ((===))
@@ -42,10 +44,11 @@ test_AllocationChangeInstruction_observers = withParties $ \parties -> do
       parties.eve
     ]
 
-account_ab, account_bc, account_cd : Parties -> Account
+account_ab, account_bc, account_cd, account_de : Parties -> Account
 account_ab parties = acc parties.alice parties.alice parties.bob
 account_bc parties = acc parties.bob parties.bob parties.charlie
 account_cd parties = acc parties.charlie parties.charlie parties.david
+account_de parties = acc parties.david parties.david parties.eve
 
 assetId_x, assetId_y : Id
 assetId_x = Id with
@@ -57,7 +60,12 @@ assetId_y = Id with
   label = "y"
   version = 0
 
-deposit_bc_x, deposit_cd_x, deposit_bc_y : Parties -> Decimal -> AssetDeposit
+asset_x : Decimal -> Asset
+asset_x quantity = Asset with
+  id = assetId_x
+  quantity
+
+deposit_bc_x, deposit_cd_x, deposit_de_x, deposit_bc_y : Parties -> Decimal -> AssetDeposit
 deposit_bc_x parties quantity = AssetDeposit with
   asset = Asset with
     id = assetId_x
@@ -65,6 +73,7 @@ deposit_bc_x parties quantity = AssetDeposit with
   account = account_bc parties
   observers = Set.fromList [parties.alice, parties.bob, parties.charlie, parties.david, parties.eve, parties.fred]
 deposit_cd_x parties quantity = (deposit_bc_x parties quantity) with account = account_cd parties
+deposit_de_x parties quantity = (deposit_bc_x parties quantity) with account = account_de parties
 deposit_bc_y parties quantity = (deposit_bc_x parties quantity) with asset.id = assetId_y
 
 test_AllocationChangeInstruction_singleDeallocation : Script ()
@@ -165,4 +174,77 @@ test_AllocationChangeInstruction_multipleDeallocation = withParties $ \parties -
   result === []
   deposits <- query @AssetDeposit (stakeholder allocationChangeInstruction)
   deposits === []
+
+-- Invalid tree scenarios:
+-- Deallocate or allocate with non-leaf terminal node
+-- Deallocate and allocate without common parent
+-- Deallocate or allocate without going up to the root
+
+test_AllocationChangeInstruction_invalidDeallocationStructure : Script ()
+test_AllocationChangeInstruction_invalidDeallocationStructure = withParties $ \parties -> do
+  let custodyAgreement1 = CustodyAgreement with
+        parent = account_ab parties
+        account = account_bc parties
+        observers = Set.fromList [parties.alice]
+  let custodyAgreement2 = CustodyAgreement with
+        parent = account_bc parties
+        account = account_cd parties
+        observers = Set.fromList [parties.alice]
+  let custodyAgreement3 = CustodyAgreement with
+        parent = account_cd parties
+        account = account_de parties
+        observers = Set.fromList [parties.alice]
+  let davidCustodianRole = CustodianRole with
+        account = account_cd parties
+        observers = Set.fromList [parties.alice]
+  depositCid_bc_x_1 <- submit parties.bob do createCmd $ deposit_bc_x parties 1.0
+  depositCid_cd_x_1 <- submit parties.charlie do createCmd $ deposit_cd_x parties 1.0
+  depositCid_de_x_1 <- submit parties.david do createCmd $ deposit_de_x parties 1.0
+  let deallocation1 = DeallocationDetails with
+        account = account_bc parties
+        depositCid = Some depositCid_bc_x_1
+  let deallocation2 = DeallocationDetails with
+        account = account_cd parties
+        depositCid = Some depositCid_cd_x_1
+  let deallocation3 = DeallocationDetails with
+        account = account_de parties
+        depositCid = Some depositCid_de_x_1
+  let masterAgreement = MasterAgreement with
+        id = Id (Set.fromList [parties.alice]) "m" 0
+        party1 = parties.charlie
+        party2 = parties.david
+  let allocationChangeInstruction = AllocationChangeInstruction with
+        asset = asset_x 1.0
+        masterAgreement
+        tradeId = Id (Set.fromList []) "t" 0
+        deallocations = [deallocation3, deallocation2, deallocation1]
+        allocations = []
+        observers = Set.empty
+  let allocationChangeInstruction_noLeaf = allocationChangeInstruction with
+        tradeId.label = "noLeaf"
+        deallocations = [deallocation2, deallocation1]
+  let allocationChangeInstruction_missingTop = allocationChangeInstruction with
+        tradeId.label = "missingTop"
+        deallocations = [deallocation3, deallocation2]
+  let allocationChangeInstruction_wrongStructure = allocationChangeInstruction with
+        tradeId.label = "wrongStructure"
+        deallocations = [deallocation2, deallocation3, deallocation1]
+  submitMulti [parties.alice, parties.bob, parties.charlie, parties.david] [] do
+    createCmd custodyAgreement1
+    createCmd custodyAgreement2
+    createCmd custodyAgreement3
+    createCmd davidCustodianRole
+    createCmd allocationChangeInstruction
+    createCmd allocationChangeInstruction_noLeaf
+    createCmd allocationChangeInstruction_missingTop
+    createCmd allocationChangeInstruction_wrongStructure
+    pure ()
+  submitMustFail parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction_noLeaf) AllocationChangeInstruction_Process
+  submitMustFail parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction_missingTop) AllocationChangeInstruction_Process
+  submitMustFail parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction_wrongStructure) AllocationChangeInstruction_Process
+  submit parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_Process
   pure ()

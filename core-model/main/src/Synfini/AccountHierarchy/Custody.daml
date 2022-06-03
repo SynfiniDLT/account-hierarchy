@@ -60,7 +60,7 @@ template CustodyRequest
         pure ()
 
 -- | Contract in which the account signatories allow the account owner to delegate beneficial ownership of assets in
--- the account to other parties.
+-- the account to other parties. This contract also signifies that the account is not a leaf node in the tree.
 template CustodianRole
   with
     account : Account -- ^ Owner of this account can choose to enter 'CustodyAgreement' contracts (with this as the
