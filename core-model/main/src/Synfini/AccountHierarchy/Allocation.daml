@@ -142,7 +142,8 @@ template AllocationChangeInstruction
     -- | Account signatories of the next unconfirmed deallocation can choose to consent to the allocation change.
     choice AllocationChangeInstruction_ConfirmNextDeallocation : ContractId AllocationChangeInstruction
       with
-        depositCid : ContractId AssetDeposit -- ^ Deposit to archived during exercise of 'AllocationChangeInstruction_Process'.
+        depositCid : ContractId AssetDeposit -- ^ Deposit to archived during exercise of
+        -- 'AllocationChangeInstruction_Process'.
       controller (head unconfirmedDeallocations).account.id.signatories
       do
         allocation <- fetch depositCid
@@ -150,7 +151,8 @@ template AllocationChangeInstruction
         let nextDeallocation = head unconfirmedDeallocations
         allocation.account === nextDeallocation.account
         let updatedNextDeallocation = nextDeallocation with depositCid = Some depositCid
-        create this with deallocations = confirmedDeallocations <> (updatedNextDeallocation :: tail unconfirmedDeallocations)
+        create this with
+          deallocations = confirmedDeallocations <> (updatedNextDeallocation :: tail unconfirmedDeallocations)
 
     -- | Execute the allocation changes.
     choice AllocationChangeInstruction_Process : [ContractId AssetDeposit]
