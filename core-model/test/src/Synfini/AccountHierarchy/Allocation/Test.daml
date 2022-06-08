@@ -93,7 +93,7 @@ test_AllocationChangeInstruction_singleDeallocation = withParties $ \parties -> 
   let allocationChangeInstruction = AllocationChangeInstruction with
         asset = deposit_bc_x_1.asset
         masterAgreement
-        tradeId = Id (Set.fromList []) "t" 0
+        tradeId = Id Set.empty "t" 0
         deallocations = [deallocation]
         allocations = []
         observers = Set.empty
@@ -148,7 +148,7 @@ test_AllocationChangeInstruction_multipleDeallocation = withParties $ \parties -
   let allocationChangeInstruction = AllocationChangeInstruction with
         asset = deposit_bc_x_1.asset
         masterAgreement
-        tradeId = Id (Set.fromList []) "t" 0
+        tradeId = Id Set.empty "t" 0
         deallocations = [deallocation2, deallocation1]
         allocations = []
         observers = Set.empty
@@ -216,7 +216,7 @@ test_AllocationChangeInstruction_invalidDeallocationStructure = withParties $ \p
   let allocationChangeInstruction = AllocationChangeInstruction with
         asset = asset_x 1.0
         masterAgreement
-        tradeId = Id (Set.fromList []) "t" 0
+        tradeId = Id Set.empty "t" 0
         deallocations = [deallocation3, deallocation2, deallocation1]
         allocations = []
         observers = Set.empty
