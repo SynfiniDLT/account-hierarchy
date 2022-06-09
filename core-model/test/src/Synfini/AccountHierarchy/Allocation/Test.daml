@@ -182,8 +182,8 @@ test_AllocationChangeInstruction_multipleDeallocation = withParties $ \parties -
 -- Deallocate and allocate without common parent
 -- Deallocate or allocate without going up to the root
 
-test_AllocationChangeInstruction_invalidDeallocationStructure : Script ()
-test_AllocationChangeInstruction_invalidDeallocationStructure = withParties $ \parties -> do
+test_AllocationChangeInstruction_invalidTreeStructure : Script ()
+test_AllocationChangeInstruction_invalidTreeStructure = withParties $ \parties -> do
   let custodyAgreement1 = CustodyAgreement with
         parent = account_ab parties
         account = account_bc parties
@@ -211,44 +211,84 @@ test_AllocationChangeInstruction_invalidDeallocationStructure = withParties $ \p
   let deallocation3 = DeallocationDetails with
         account = account_de parties
         depositCid = Some depositCid_de_x_1
+  let allocation1 = AllocationDetails with
+        account = deallocation1.account
+        confirmed = True
+  let allocation2 = AllocationDetails with
+        account = deallocation2.account
+        confirmed = True
+  let allocation3 = AllocationDetails with
+        account = deallocation3.account
+        confirmed = True
   let masterAgreement = MasterAgreement with
         id = Id (Set.fromList [parties.alice]) "m" 0
         party1 = parties.charlie
         party2 = parties.david
-  let allocationChangeInstruction = AllocationChangeInstruction with
+  let deallocateInstruction = AllocationChangeInstruction with
         asset = asset_x 1.0
         masterAgreement
-        tradeId = Id Set.empty "t" 0
+        tradeId = Id Set.empty "deallocate" 0
         deallocations = [deallocation3, deallocation2, deallocation1]
         allocations = []
         observers = Set.empty
-  let allocationChangeInstruction_noLeaf = allocationChangeInstruction with
-        tradeId.label = "noLeaf"
+  let deallocateInstruction_noLeaf = deallocateInstruction with
+        tradeId.label = "deallocate.noLeaf"
         deallocations = [deallocation2, deallocation1]
-  let allocationChangeInstruction_missingTop = allocationChangeInstruction with
-        tradeId.label = "missingTop"
+  let deallocateInstruction_missingTop = deallocateInstruction with
+        tradeId.label = "deallocate.missingTop"
         deallocations = [deallocation3, deallocation2]
-  let allocationChangeInstruction_wrongStructure = allocationChangeInstruction with
-        tradeId.label = "wrongStructure"
+  let deallocateInstruction_wrongStructure = deallocateInstruction with
+        tradeId.label = "deallocate.wrongStructure"
         deallocations = [deallocation2, deallocation3, deallocation1]
+  let allocateInstruction = AllocationChangeInstruction with
+        asset = asset_x 1.0
+        masterAgreement
+        tradeId = Id Set.empty "allocate" 0
+        deallocations = []
+        allocations = [allocation1, allocation2, allocation3]
+        observers = Set.empty
+  let allocateInstruction_noLeaf = allocateInstruction with
+        tradeId.label = "allocate.noLeaf"
+        allocations = [allocation1, allocation2]
+  let allocateInstruction_missingTop = allocateInstruction with
+        tradeId.label = "allocate.missingTop"
+        allocations = [allocation2, allocation3]
+  let allocateInstruction_wrongStructure = allocateInstruction with
+        tradeId.label = "allocate.wrongStructure"
+        allocations = [allocation1, allocation3, allocation2]
+
   submitMulti [parties.alice, parties.bob, parties.charlie, parties.david] [] do
     createCmd custodyAgreement1
     createCmd custodyAgreement2
     createCmd custodyAgreement3
     createCmd davidCustodianRole
-    createCmd allocationChangeInstruction
-    createCmd allocationChangeInstruction_noLeaf
-    createCmd allocationChangeInstruction_missingTop
-    createCmd allocationChangeInstruction_wrongStructure
+    createCmd deallocateInstruction
+    createCmd deallocateInstruction_noLeaf
+    createCmd deallocateInstruction_missingTop
+    createCmd deallocateInstruction_wrongStructure
+    createCmd allocateInstruction
+    createCmd allocateInstruction_noLeaf
+    createCmd allocateInstruction_missingTop
+    createCmd allocateInstruction_wrongStructure
     pure ()
+
   submitMustFail parties.alice do
-    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction_noLeaf) AllocationChangeInstruction_Process
+    exerciseByKeyCmd @AllocationChangeInstruction (key deallocateInstruction_noLeaf) AllocationChangeInstruction_Process
   submitMustFail parties.alice do
-    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction_missingTop) AllocationChangeInstruction_Process
+    exerciseByKeyCmd @AllocationChangeInstruction (key deallocateInstruction_missingTop) AllocationChangeInstruction_Process
   submitMustFail parties.alice do
-    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction_wrongStructure) AllocationChangeInstruction_Process
+    exerciseByKeyCmd @AllocationChangeInstruction (key deallocateInstruction_wrongStructure) AllocationChangeInstruction_Process
   submit parties.alice do
-    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_Process
+    exerciseByKeyCmd @AllocationChangeInstruction (key deallocateInstruction) AllocationChangeInstruction_Process
+
+  submitMustFail parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocateInstruction_noLeaf) AllocationChangeInstruction_Process
+  submitMustFail parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocateInstruction_missingTop) AllocationChangeInstruction_Process
+  submitMustFail parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocateInstruction_wrongStructure) AllocationChangeInstruction_Process
+  submit parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocateInstruction) AllocationChangeInstruction_Process
   pure ()
 
 test_AllocationChangeInstruction_singleAllocation : Script ()
