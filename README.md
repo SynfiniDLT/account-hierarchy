@@ -75,5 +75,5 @@ Daml model and how to use the templates. For each example, there is an accompany
 
 The project is divided into multiple sub-module directories. The core account hierarchy templates are defined under
 `core-model`, while the automation for these templates is in `core-trigger`. New sub-modules may be developed in
-future to cater for specific use-cases. For example, a proxy voting model. The project is open to contribution of
-new sub-modules from the community.
+future to cater for specific use-cases. For example, proxy voting with `proxy-model` and `proxy-trigger` sub-modules.
+The project is open to contribution of new sub-modules from the community.

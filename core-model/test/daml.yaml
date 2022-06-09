@@ -4,13 +4,13 @@
 sdk-version: 1.17.1
 name: account-hierarchy-core-model-test
 source: src
-version: 0.1.0
+version: 0.1.1
 dependencies:
   - daml-prim
   - daml-stdlib
   - daml-script
   - ../../lib-finance/model/.daml/dist/finlib-2.0.0.dar
-  - ../main/.daml/dist/account-hierarchy-core-model-0.1.0.dar
+  - ../main/.daml/dist/account-hierarchy-core-model-0.1.1.dar
 build-options: [
   "--ghc-option", "-Wall",
   "--ghc-option", "-Wunused-do-bind",
