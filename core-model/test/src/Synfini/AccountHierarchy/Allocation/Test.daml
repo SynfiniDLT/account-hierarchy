@@ -8,6 +8,8 @@ module Synfini.AccountHierarchy.Allocation.Test where
 import DA.Assert ((===))
 import DA.Finance.Asset
 import DA.Finance.Types
+import qualified DA.Map as Map
+import qualified DA.Optional as O
 import qualified DA.Set as Set
 import Daml.Script
 import Synfini.AccountHierarchy.Allocation
@@ -248,3 +250,90 @@ test_AllocationChangeInstruction_invalidDeallocationStructure = withParties $ \p
   submit parties.alice do
     exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_Process
   pure ()
+
+test_AllocationChangeInstruction_singleAllocation : Script ()
+test_AllocationChangeInstruction_singleAllocation = withParties $ \parties -> do
+  let custodyAgreement = CustodyAgreement with
+        parent = account_ab parties
+        account = account_bc parties
+        observers = Set.fromList [parties.charlie]
+  let allocation = AllocationDetails with
+        account = account_bc parties
+        confirmed = False
+  let deposit_bc_x_1 = deposit_bc_x parties 1.0
+  let masterAgreement = MasterAgreement with
+        id = Id (Set.fromList [parties.alice]) "m" 0
+        party1 = parties.charlie
+        party2 = parties.david
+  let allocationChangeInstruction = AllocationChangeInstruction with
+        asset = deposit_bc_x_1.asset
+        masterAgreement
+        tradeId = Id Set.empty "t" 0
+        deallocations = []
+        allocations = [allocation]
+        observers = Set.empty
+
+  submitMulti [parties.alice, parties.bob] [] do createCmd custodyAgreement
+
+  submit parties.alice do createCmd allocationChangeInstruction
+  submit parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextAllocation
+  [resultCid] <- submit parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_Process
+  [(depositCid, deposit)] <- query @AssetDeposit (stakeholder allocationChangeInstruction)
+  depositCid === resultCid
+  deposit.asset === allocationChangeInstruction.asset
+  deposit.account === allocation.account
+
+test_AllocationChangeInstruction_multipleAllocation : Script ()
+test_AllocationChangeInstruction_multipleAllocation = withParties $ \parties -> do
+  let custodyAgreement1 = CustodyAgreement with
+        parent = account_ab parties
+        account = account_bc parties
+        observers = Set.fromList [parties.alice]
+  let custodyAgreement2 = CustodyAgreement with
+        parent = account_bc parties
+        account = account_cd parties
+        observers = Set.fromList [parties.alice]
+  let allocation1 = AllocationDetails with
+        account = account_bc parties
+        confirmed = False
+  let allocation2 = AllocationDetails with
+        account = account_cd parties
+        confirmed = False
+  let masterAgreement = MasterAgreement with
+        id = Id (Set.fromList [parties.alice]) "m" 0
+        party1 = parties.charlie
+        party2 = parties.david
+  let allocationChangeInstruction = AllocationChangeInstruction with
+        asset = asset_x 1.0
+        masterAgreement
+        tradeId = Id Set.empty "t" 0
+        deallocations = []
+        allocations = [allocation1, allocation2]
+        observers = Set.empty
+
+  submitMulti [parties.alice, parties.bob, parties.charlie, parties.david] [] do
+    createCmd custodyAgreement1
+    createCmd custodyAgreement2
+    pure ()
+
+  submit parties.alice do createCmd allocationChangeInstruction
+  submitMustFail parties.charlie do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextAllocation
+  submit parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextAllocation
+  submit parties.charlie do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextAllocation
+
+  resultCids@[resultCid1, resultCid2] <- submit parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_Process
+  depositsMap <- Map.fromList <$> query @AssetDeposit (stakeholder allocationChangeInstruction)
+
+  Set.fromList (Map.keys depositsMap) === Set.fromList resultCids
+  let deposit1 = O.fromSome $ Map.lookup resultCid1 depositsMap
+      deposit2 = O.fromSome $ Map.lookup resultCid2 depositsMap
+  deposit1.account === allocation1.account
+  deposit1.asset === allocationChangeInstruction.asset
+  deposit2.account === allocation2.account
+  deposit2.asset === allocationChangeInstruction.asset
