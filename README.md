@@ -73,7 +73,9 @@ Daml model and how to use the templates. For each example, there is an accompany
 
 ## Project structure
 
-The project is divided into multiple sub-module directories. The core account hierarchy templates are defined under
-`core-model`, while the automation for these templates is in `core-trigger`. New sub-modules may be developed in
-future to cater for specific use-cases. For example, proxy voting with `proxy-model` and `proxy-trigger` sub-modules.
-The project is open to contribution of new sub-modules from the community.
+The project is divided into multiple sub-module directories. Sub-module directories ending with "model" contain
+the workflows (i.e. templates to be uploaded to the ledger), whereas those ending with "trigger" are for automation
+of these workflows using Daml triggers. The core account hierarchy templates are defined under `core-model`,
+while the automation for these templates is in `core-trigger`. New sub-modules may be developed in
+future to cater for specific use-cases. Examples could include a proxy voting with `proxy-model` and `proxy-trigger`
+sub-modules. The project is open to input on new sub-modules from the community.
