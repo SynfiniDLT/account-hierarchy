@@ -3,7 +3,6 @@
 
 module Synfini.AccountHierarchy.Custody where
 
-import DA.Assert ((===))
 import DA.Finance.Types
 import DA.Set (Set)
 import qualified DA.Set as Set
@@ -39,13 +38,13 @@ template CustodyRequest
     account : Account -- ^ Account of prospective beneficiary.
   where
     signatory account.id.signatories
-    observer parent.id.signatories
+    observer parent.owner
 
     -- | Accept the request and create the 'CustodyAgreement'.
     choice CustodyRequest_Accept : ContractId CustodyAgreement
-      controller parent.id.signatories
+      controller parent.owner
       do
-        create CustodyAgreement with account, parent, observers = Set.empty
+        exerciseByKey @CustodianRole parent.id CustodianRole_EnterCustodyAgreement with account
 
     -- | Cancel the request.
     choice CustodyRequest_Cancel : ()
@@ -55,7 +54,7 @@ template CustodyRequest
 
     -- | Reject the request.
     choice CustodyRequest_Reject : ()
-      controller parent.id.signatories
+      controller parent.owner
       do
         pure ()
 
@@ -63,32 +62,20 @@ template CustodyRequest
 -- the account to other parties. This contract also signifies that the account is not a leaf node in the tree.
 template CustodianRole
   with
-    account : Account -- ^ Owner of this account can choose to enter 'CustodyAgreement' contracts (with this as the
+    parent : Account -- ^ Owner of this account can choose to enter 'CustodyAgreement' contracts (with this as the
     -- 'parent' account).
     observers : Set Party -- ^ Contract observers.
   where
-    signatory account.id.signatories
-    observer account.provider, account.owner, observers
+    signatory parent.id.signatories
+    observer parent.provider, parent.owner, observers
 
-    key account.id : Id
+    key parent.id : Id
     maintainer key.signatories
 
     -- | Accept a request to act as a custodian.
-    nonconsuming choice CustodianRole_AcceptCustodyRequest : ContractId CustodyAgreement
+    nonconsuming choice CustodianRole_EnterCustodyAgreement : ContractId CustodyAgreement
       with
-        custodyRequestCid : ContractId CustodyRequest -- ^ Contract ID of the request.
-      controller account.owner
+        account : Account -- ^ Account of beneficiary.
+      controller parent.owner, account.id.signatories
       do
-        custodyRequest <- fetch custodyRequestCid
-        custodyRequest.parent === account
-        exercise custodyRequestCid CustodyRequest_Accept
-
-    -- | Reject a request to act as a custodian.
-    nonconsuming choice CustodianRole_RejectCustodyRequest : ()
-      with
-        custodyRequestCid : ContractId CustodyRequest -- ^ Contract ID of the request.
-      controller account.owner
-      do
-        custodyRequest <- fetch custodyRequestCid
-        custodyRequest.parent === account
-        exercise custodyRequestCid CustodyRequest_Reject
+        create CustodyAgreement with parent, account, observers = Set.empty

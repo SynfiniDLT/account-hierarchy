@@ -4,7 +4,6 @@
 module Synfini.AccountHierarchy.Custody.Test where
 
 import DA.Assert
-import DA.Finance.Types
 import qualified DA.Set as Set
 import Daml.Script
 import Synfini.AccountHierarchy.Custody
@@ -51,28 +50,26 @@ test_CustodyAgreement_SetObservers = withParties $ \parties -> do
 
 test_CustodyRequest_signatories : Script ()
 test_CustodyRequest_signatories = withParties $ \parties -> do
-  let account1 = acc [parties.alice] parties.bob parties.bob
-  let account2 = acc [parties.charlie] parties.david parties.david
-  let custodyRequest = CustodyRequest with
-        parent = account2
-        account = account1
+  let account = acc [parties.alice] parties.bob parties.bob
+  let parent = acc [parties.charlie] parties.david parties.david
+  let custodyRequest = CustodyRequest with account, parent
   Set.fromList (signatory custodyRequest) === Set.fromList [parties.alice]
 
 test_CustodyRequest_Accept : Script ()
 test_CustodyRequest_Accept = withParties $ \parties -> do
-  let account1 = acc [parties.alice] parties.bob parties.bob
-  let account2 = acc [parties.charlie] parties.bob parties.bob
-  let custodyRequest = CustodyRequest with
-        parent = account2
-        account = account1
+  let account = acc [parties.alice] parties.bob parties.bob
+  let parent = acc [parties.charlie] parties.bob parties.bob
+  let custodyRequest = CustodyRequest with account, parent
   custodyRequestCid <- submit parties.alice do createCmd custodyRequest
-  submitMultiMustFail [parties.alice, parties.bob, parties.david] [parties.alice, parties.bob, parties.david] do
+  -- Bob doesn't have a CustodianRole so he cannot accept the request
+  submitMustFail parties.bob do
     exerciseCmd custodyRequestCid CustodyRequest_Accept
-  submit parties.charlie do
+  submit parties.charlie do createCmd CustodianRole with parent, observers = Set.empty
+  submit parties.bob do
     exerciseCmd custodyRequestCid CustodyRequest_Accept
   custodyAgreements <- fmap snd <$> query parties.charlie
   let expectedCustodyAgreement = CustodyAgreement with
-        parent = account2
-        account = account1
+        parent
+        account
         observers = Set.empty
   custodyAgreements === [expectedCustodyAgreement]

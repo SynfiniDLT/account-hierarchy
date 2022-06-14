@@ -197,7 +197,7 @@ test_AllocationChangeInstruction_invalidTreeStructure = withParties $ \parties -
         account = account_de parties
         observers = Set.fromList [parties.alice]
   let davidCustodianRole = CustodianRole with
-        account = account_cd parties
+        parent = account_cd parties
         observers = Set.fromList [parties.alice]
   depositCid_bc_x_1 <- submit parties.bob do createCmd $ deposit_bc_x parties 1.0
   depositCid_cd_x_1 <- submit parties.charlie do createCmd $ deposit_cd_x parties 1.0
