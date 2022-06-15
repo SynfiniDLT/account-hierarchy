@@ -77,5 +77,5 @@ The project is divided into multiple sub-module directories. Sub-module director
 the workflows (i.e. templates to be uploaded to the ledger), whereas those ending with "trigger" are for automation
 of these workflows using Daml triggers. The core account hierarchy templates are defined under `core-model`,
 while the automation for these templates is in `core-trigger`. New sub-modules may be developed in
-future to cater for specific use-cases. Examples could include a proxy voting with `proxy-model` and `proxy-trigger`
+future to cater for specific use-cases. Examples could include proxy voting capability with `proxy-model` and `proxy-trigger`
 sub-modules. The project is open to input on new sub-modules from the community.
