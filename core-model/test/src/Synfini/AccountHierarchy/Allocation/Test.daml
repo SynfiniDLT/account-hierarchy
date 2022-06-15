@@ -74,7 +74,7 @@ deposit_bc_x parties quantity = AssetDeposit with
     id = assetId_x
     quantity
   account = account_bc parties
-  observers = Set.fromList [parties.alice, parties.bob, parties.charlie, parties.david, parties.eve, parties.fred]
+  observers = Set.fromList (allParties parties)
 deposit_cd_x parties quantity = (deposit_bc_x parties quantity) with account = account_cd parties
 deposit_de_x parties quantity = (deposit_bc_x parties quantity) with account = account_de parties
 deposit_df_x parties quantity = (deposit_bc_x parties quantity) with account = account_df parties
@@ -159,7 +159,7 @@ test_AllocationChangeInstruction_multipleDeallocation = withParties $ \parties -
         allocations = []
         observers = Set.empty
 
-  submitMulti [parties.alice, parties.bob, parties.charlie, parties.david] [] $
+  submitMulti (allParties parties) [] $
     createCmd custodyAgreement1 *>
     createCmd custodyAgreement2
   depositCid1 <- submit parties.bob do createCmd deposit_bc_x_1
@@ -293,7 +293,7 @@ test_AllocationChangeInstruction_invalidTreeStructure = withParties $ \parties -
         tradeId.label = "transfer.noCommonAncestor"
         allocations = [allocation_rootGrandchild2_otherHierarchy]
 
-  submitMulti [parties.alice, parties.bob, parties.charlie, parties.david] [] do
+  submitMulti (allParties parties) [] do
     createCmd custodyAgreement_root
     createCmd custodyAgreement_rootChild
     createCmd custodyAgreement_rootGrandchild1
@@ -373,6 +373,9 @@ test_AllocationChangeInstruction_singleAllocation = withParties $ \parties -> do
   deposit.asset === allocationChangeInstruction.asset
   deposit.account === allocation.account
 
+  allocationChangeInstructions <- query @AllocationChangeInstruction (stakeholder allocationChangeInstruction)
+  allocationChangeInstructions === []
+
 test_AllocationChangeInstruction_multipleAllocation : Script ()
 test_AllocationChangeInstruction_multipleAllocation = withParties $ \parties -> do
   let custodyAgreement1 = CustodyAgreement with
@@ -401,7 +404,7 @@ test_AllocationChangeInstruction_multipleAllocation = withParties $ \parties -> 
         allocations = [allocation1, allocation2]
         observers = Set.empty
 
-  submitMulti [parties.alice, parties.bob, parties.charlie, parties.david] [] do
+  submitMulti (allParties parties) [] do
     createCmd custodyAgreement1
     createCmd custodyAgreement2
     pure ()
@@ -417,7 +420,6 @@ test_AllocationChangeInstruction_multipleAllocation = withParties $ \parties -> 
   resultCids@[resultCid1, resultCid2] <- submit parties.alice do
     exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_Process
   depositsMap <- Map.fromList <$> query @AssetDeposit (stakeholder allocationChangeInstruction)
-
   Set.fromList (Map.keys depositsMap) === Set.fromList resultCids
   let deposit1 = O.fromSome $ Map.lookup resultCid1 depositsMap
       deposit2 = O.fromSome $ Map.lookup resultCid2 depositsMap
@@ -425,3 +427,6 @@ test_AllocationChangeInstruction_multipleAllocation = withParties $ \parties -> 
   deposit1.asset === allocationChangeInstruction.asset
   deposit2.account === allocation2.account
   deposit2.asset === allocationChangeInstruction.asset
+
+  allocationChangeInstructions <- query @AllocationChangeInstruction (stakeholder allocationChangeInstruction)
+  allocationChangeInstructions === []

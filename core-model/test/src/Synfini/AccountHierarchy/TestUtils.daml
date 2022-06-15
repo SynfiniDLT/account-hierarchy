@@ -31,6 +31,9 @@ withParties test = do
   parties <- allocateParties
   test parties
 
+allParties : Parties -> [Party]
+allParties parties = [parties.alice, parties.bob, parties.charlie, parties.david, parties.eve, parties.fred]
+
 acc : IsParties p => p -> Party -> Party -> Account
 acc sigs provider owner =
   let sigsSet = Set.fromList $ toParties sigs in
