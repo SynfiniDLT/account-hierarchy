@@ -46,11 +46,12 @@ test_AllocationChangeInstruction_observers = withParties $ \parties -> do
       parties.eve
     ]
 
-account_ab, account_bc, account_cd, account_de : Parties -> Account
+account_ab, account_bc, account_cd, account_de, account_df : Parties -> Account
 account_ab parties = acc parties.alice parties.alice parties.bob
 account_bc parties = acc parties.bob parties.bob parties.charlie
 account_cd parties = acc parties.charlie parties.charlie parties.david
 account_de parties = acc parties.david parties.david parties.eve
+account_df parties = acc parties.david parties.david parties.fred
 
 assetId_x, assetId_y : Id
 assetId_x = Id with
@@ -67,7 +68,7 @@ asset_x quantity = Asset with
   id = assetId_x
   quantity
 
-deposit_bc_x, deposit_cd_x, deposit_de_x, deposit_bc_y : Parties -> Decimal -> AssetDeposit
+deposit_bc_x, deposit_cd_x, deposit_de_x, deposit_df_x, deposit_bc_y : Parties -> Decimal -> AssetDeposit
 deposit_bc_x parties quantity = AssetDeposit with
   asset = Asset with
     id = assetId_x
@@ -76,6 +77,7 @@ deposit_bc_x parties quantity = AssetDeposit with
   observers = Set.fromList [parties.alice, parties.bob, parties.charlie, parties.david, parties.eve, parties.fred]
 deposit_cd_x parties quantity = (deposit_bc_x parties quantity) with account = account_cd parties
 deposit_de_x parties quantity = (deposit_bc_x parties quantity) with account = account_de parties
+deposit_df_x parties quantity = (deposit_bc_x parties quantity) with account = account_df parties
 deposit_bc_y parties quantity = (deposit_bc_x parties quantity) with asset.id = assetId_y
 
 test_AllocationChangeInstruction_singleDeallocation : Script ()
@@ -124,6 +126,8 @@ test_AllocationChangeInstruction_singleDeallocation = withParties $ \parties -> 
   result === []
   depositCids <- fmap fst <$> query @AssetDeposit (stakeholder allocationChangeInstruction)
   Set.fromList depositCids === Set.fromList [depositCid_badQuantity, depositCid_badAssetId, depositCid_badAccount]
+  allocationChangeInstructions <- query @AllocationChangeInstruction (stakeholder allocationChangeInstruction)
+  allocationChangeInstructions === []
 
 test_AllocationChangeInstruction_multipleDeallocation : Script ()
 test_AllocationChangeInstruction_multipleDeallocation = withParties $ \parties -> do
@@ -176,50 +180,72 @@ test_AllocationChangeInstruction_multipleDeallocation = withParties $ \parties -
   result === []
   deposits <- query @AssetDeposit (stakeholder allocationChangeInstruction)
   deposits === []
-
--- Invalid tree scenarios:
--- Deallocate or allocate with non-leaf terminal node
--- Deallocate and allocate without common parent
--- Deallocate or allocate without going up to the root
+  allocationChangeInstructions <- query @AllocationChangeInstruction (stakeholder allocationChangeInstruction)
+  allocationChangeInstructions === []
 
 test_AllocationChangeInstruction_invalidTreeStructure : Script ()
 test_AllocationChangeInstruction_invalidTreeStructure = withParties $ \parties -> do
-  let custodyAgreement1 = CustodyAgreement with
+  let custodyAgreement_root = CustodyAgreement with
         parent = account_ab parties
         account = account_bc parties
         observers = Set.fromList [parties.alice]
-  let custodyAgreement2 = CustodyAgreement with
+  let custodyAgreement_rootChild = CustodyAgreement with
         parent = account_bc parties
         account = account_cd parties
         observers = Set.fromList [parties.alice]
-  let custodyAgreement3 = CustodyAgreement with
+  let custodyAgreement_rootGrandchild1 = CustodyAgreement with
         parent = account_cd parties
         account = account_de parties
         observers = Set.fromList [parties.alice]
+  let custodyAgreement_rootGrandchild2 = CustodyAgreement with
+        parent = account_cd parties
+        account = account_df parties
+        observers = Set.fromList [parties.alice]
+  let custodyAgreement_root_otherHierarchy =  custodyAgreement_root with
+        parent.id.version = 1
+        account.id.version = 1
+  let custodyAgreement_rootChild_otherHierarchy = custodyAgreement_rootChild with
+        parent.id.version = 1
+        account.id.version = 1
+  let custodyAgreement_rootGrandchild1_otherHierarchy = custodyAgreement_rootGrandchild1 with
+        parent.id.version = 1
+        account.id.version = 1
+  let custodyAgreement_rootGrandchild2_otherHierarchy = custodyAgreement_rootGrandchild2 with
+        parent.id.version = 1
+        account.id.version = 1
   let davidCustodianRole = CustodianRole with
         parent = account_cd parties
         observers = Set.fromList [parties.alice]
   depositCid_bc_x_1 <- submit parties.bob do createCmd $ deposit_bc_x parties 1.0
   depositCid_cd_x_1 <- submit parties.charlie do createCmd $ deposit_cd_x parties 1.0
   depositCid_de_x_1 <- submit parties.david do createCmd $ deposit_de_x parties 1.0
-  let deallocation1 = DeallocationDetails with
+  depositCid_de_x_2 <- submit parties.david do createCmd $ deposit_de_x parties 2.0
+  depositCid_df_x_1 <- submit parties.david do createCmd $ deposit_df_x parties 1.0
+  let deallocation_root = DeallocationDetails with
         account = account_bc parties
         depositCid = Some depositCid_bc_x_1
-  let deallocation2 = DeallocationDetails with
+  let deallocation_rootChild = DeallocationDetails with
         account = account_cd parties
         depositCid = Some depositCid_cd_x_1
-  let deallocation3 = DeallocationDetails with
+  let deallocation_rootGrandchild1 = DeallocationDetails with
         account = account_de parties
         depositCid = Some depositCid_de_x_1
-  let allocation1 = AllocationDetails with
-        account = deallocation1.account
+  let deallocation_rootGrandchild2 = DeallocationDetails with
+        account = account_df parties
+        depositCid = Some depositCid_df_x_1
+  let allocation_root = AllocationDetails with
+        account = deallocation_root.account
         confirmed = True
-  let allocation2 = AllocationDetails with
-        account = deallocation2.account
+  let allocation_rootChild = AllocationDetails with
+        account = deallocation_rootChild.account
         confirmed = True
-  let allocation3 = AllocationDetails with
-        account = deallocation3.account
+  let allocation_rootGrandchild1 = AllocationDetails with
+        account = deallocation_rootGrandchild1.account
         confirmed = True
+  let allocation_rootGrandchild2 = AllocationDetails with
+        account = deallocation_rootGrandchild2.account
+        confirmed = True
+  let allocation_rootGrandchild2_otherHierarchy = allocation_rootGrandchild2 with account.id.version = 1
   let masterAgreement = MasterAgreement with
         id = Id (Set.fromList [parties.alice]) "m" 0
         party1 = parties.charlie
@@ -228,48 +254,65 @@ test_AllocationChangeInstruction_invalidTreeStructure = withParties $ \parties -
         asset = asset_x 1.0
         masterAgreement
         tradeId = Id Set.empty "deallocate" 0
-        deallocations = [deallocation3, deallocation2, deallocation1]
+        deallocations = [deallocation_rootGrandchild1, deallocation_rootChild, deallocation_root]
         allocations = []
         observers = Set.empty
   let deallocateInstruction_noLeaf = deallocateInstruction with
         tradeId.label = "deallocate.noLeaf"
-        deallocations = [deallocation2, deallocation1]
+        deallocations = [deallocation_rootChild, deallocation_root]
   let deallocateInstruction_missingTop = deallocateInstruction with
         tradeId.label = "deallocate.missingTop"
-        deallocations = [deallocation3, deallocation2]
-  let deallocateInstruction_wrongStructure = deallocateInstruction with
-        tradeId.label = "deallocate.wrongStructure"
-        deallocations = [deallocation2, deallocation3, deallocation1]
+        deallocations = [deallocation_rootGrandchild1, deallocation_rootChild]
+  let deallocateInstruction_wrongOrder = deallocateInstruction with
+        tradeId.label = "deallocate.wrongOrder"
+        deallocations = [deallocation_rootChild, deallocation_rootGrandchild1, deallocation_root]
   let allocateInstruction = AllocationChangeInstruction with
         asset = asset_x 1.0
         masterAgreement
         tradeId = Id Set.empty "allocate" 0
         deallocations = []
-        allocations = [allocation1, allocation2, allocation3]
+        allocations = [allocation_root, allocation_rootChild, allocation_rootGrandchild1]
         observers = Set.empty
   let allocateInstruction_noLeaf = allocateInstruction with
         tradeId.label = "allocate.noLeaf"
-        allocations = [allocation1, allocation2]
+        allocations = [allocation_root, allocation_rootChild]
   let allocateInstruction_missingTop = allocateInstruction with
         tradeId.label = "allocate.missingTop"
-        allocations = [allocation2, allocation3]
-  let allocateInstruction_wrongStructure = allocateInstruction with
-        tradeId.label = "allocate.wrongStructure"
-        allocations = [allocation1, allocation3, allocation2]
+        allocations = [allocation_rootChild, allocation_rootGrandchild1]
+  let allocateInstruction_wrongOrder = allocateInstruction with
+        tradeId.label = "allocate.wrongOrder"
+        allocations = [allocation_root, allocation_rootGrandchild1, allocation_rootChild]
+  let transferInstruction = AllocationChangeInstruction with
+        asset = asset_x 2.0
+        masterAgreement
+        tradeId = Id Set.empty "transfer" 0
+        deallocations = [deallocation_rootGrandchild1 with depositCid = Some depositCid_de_x_2]
+        allocations = [allocation_rootGrandchild2]
+        observers = Set.empty
+  let transferInstruction_noCommonAncestor = transferInstruction with
+        tradeId.label = "transfer.noCommonAncestor"
+        allocations = [allocation_rootGrandchild2_otherHierarchy]
 
   submitMulti [parties.alice, parties.bob, parties.charlie, parties.david] [] do
-    createCmd custodyAgreement1
-    createCmd custodyAgreement2
-    createCmd custodyAgreement3
+    createCmd custodyAgreement_root
+    createCmd custodyAgreement_rootChild
+    createCmd custodyAgreement_rootGrandchild1
+    createCmd custodyAgreement_rootGrandchild2
+    createCmd custodyAgreement_root_otherHierarchy
+    createCmd custodyAgreement_rootChild_otherHierarchy
+    createCmd custodyAgreement_rootGrandchild1_otherHierarchy
+    createCmd custodyAgreement_rootGrandchild2_otherHierarchy
     createCmd davidCustodianRole
     createCmd deallocateInstruction
     createCmd deallocateInstruction_noLeaf
     createCmd deallocateInstruction_missingTop
-    createCmd deallocateInstruction_wrongStructure
+    createCmd deallocateInstruction_wrongOrder
     createCmd allocateInstruction
     createCmd allocateInstruction_noLeaf
     createCmd allocateInstruction_missingTop
-    createCmd allocateInstruction_wrongStructure
+    createCmd allocateInstruction_wrongOrder
+    createCmd transferInstruction
+    createCmd transferInstruction_noCommonAncestor
     pure ()
 
   submitMustFail parties.alice do
@@ -277,7 +320,7 @@ test_AllocationChangeInstruction_invalidTreeStructure = withParties $ \parties -
   submitMustFail parties.alice do
     exerciseByKeyCmd @AllocationChangeInstruction (key deallocateInstruction_missingTop) AllocationChangeInstruction_Process
   submitMustFail parties.alice do
-    exerciseByKeyCmd @AllocationChangeInstruction (key deallocateInstruction_wrongStructure) AllocationChangeInstruction_Process
+    exerciseByKeyCmd @AllocationChangeInstruction (key deallocateInstruction_wrongOrder) AllocationChangeInstruction_Process
   submit parties.alice do
     exerciseByKeyCmd @AllocationChangeInstruction (key deallocateInstruction) AllocationChangeInstruction_Process
 
@@ -286,9 +329,14 @@ test_AllocationChangeInstruction_invalidTreeStructure = withParties $ \parties -
   submitMustFail parties.alice do
     exerciseByKeyCmd @AllocationChangeInstruction (key allocateInstruction_missingTop) AllocationChangeInstruction_Process
   submitMustFail parties.alice do
-    exerciseByKeyCmd @AllocationChangeInstruction (key allocateInstruction_wrongStructure) AllocationChangeInstruction_Process
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocateInstruction_wrongOrder) AllocationChangeInstruction_Process
   submit parties.alice do
     exerciseByKeyCmd @AllocationChangeInstruction (key allocateInstruction) AllocationChangeInstruction_Process
+
+  submitMustFail parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key transferInstruction_noCommonAncestor) AllocationChangeInstruction_Process
+  submit parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key transferInstruction) AllocationChangeInstruction_Process
   pure ()
 
 test_AllocationChangeInstruction_singleAllocation : Script ()
