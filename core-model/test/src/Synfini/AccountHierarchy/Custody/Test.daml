@@ -21,9 +21,9 @@ test_CustodyAgreement_observers : Script ()
 test_CustodyAgreement_observers = withParties $ \parties -> do
   let custodyAgreement = CustodyAgreement with
         parent = acc parties.alice parties.alice parties.alice
-        account = acc parties.alice parties.alice parties.alice
-        observers = Set.fromList [parties.bob, parties.charlie]
-  Set.fromList (observer custodyAgreement) === Set.fromList [parties.bob, parties.charlie]
+        account = acc parties.alice parties.alice parties.bob
+        observers = Set.fromList [parties.charlie, parties.david]
+  Set.fromList (observer custodyAgreement) === Set.fromList [parties.bob, parties.charlie, parties.david]
 
 test_CustodyAgreement_ensure : Script ()
 test_CustodyAgreement_ensure = withParties $ \parties -> do
@@ -64,7 +64,7 @@ test_CustodyRequest_Accept = withParties $ \parties -> do
   -- Bob doesn't have a CustodianRole so he cannot accept the request
   submitMustFail parties.bob do
     exerciseCmd custodyRequestCid CustodyRequest_Accept
-  submit parties.charlie do createCmd CustodianRole with parent, observers = Set.empty
+  custodianRoleCid <- submit parties.charlie do createCmd CustodianRole with parent, observers = Set.empty
   submit parties.bob do
     exerciseCmd custodyRequestCid CustodyRequest_Accept
   custodyAgreements <- fmap snd <$> query parties.charlie
@@ -73,3 +73,5 @@ test_CustodyRequest_Accept = withParties $ \parties -> do
         account
         observers = Set.empty
   custodyAgreements === [expectedCustodyAgreement]
+  custodianRoles <- fmap fst <$> query @CustodianRole (allParties parties)
+  custodianRoles === [custodianRoleCid]

@@ -16,7 +16,7 @@ template CustodyAgreement
     observers : Set Party
   where
     signatory account.id.signatories, parent.id.signatories
-    observer observers
+    observer account.owner, observers
 
     ensure account.provider == parent.owner
 
