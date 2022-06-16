@@ -1,7 +1,18 @@
 -- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
 -- SPDX-License-Identifier: Apache-2.0
 
-module Synfini.AccountHierarchy.Allocation where
+module Synfini.AccountHierarchy.Allocation(
+  AllocationChangeRule(..),
+  AllocationChangeRule_ConfirmNextAllocation(..),
+  AllocationChangeRule_ConfirmNextDeallocation(..),
+  AllocationDetails(..),
+  DeallocationDetails(..),
+  AllocationChangeInstruction(..),
+  AllocationChangeInstruction_Archive(..),
+  AllocationChangeInstruction_ConfirmNextAllocation(..),
+  AllocationChangeInstruction_ConfirmNextDeallocation(..),
+  AllocationChangeInstruction_Process(..)
+) where
 
 import DA.Action (unless)
 import DA.Assert ((===))
@@ -87,12 +98,6 @@ assertAtHierarchyTop account = do
   (_, topCustodyAgreement) <- fetchByKey @CustodyAgreement account.id
   rootCustodyAgreement <- lookupByKey @CustodyAgreement topCustodyAgreement.parent.id
   rootCustodyAgreement === None
-
-assertSameParent : Account -> Account -> Update ()
-assertSameParent acc1 acc2 = do
-  (_, custodyAgreement1) <- fetchByKey @CustodyAgreement acc1.id
-  (_, custodyAgreement2) <- fetchByKey @CustodyAgreement acc2.id
-  custodyAgreement1.parent === custodyAgreement2.parent
 
 getParent : Account -> Update Account
 getParent account = do
