@@ -85,7 +85,7 @@ template CustodialDvpSettlementRule
         -- meaning that the DvP is fully contained in one hierarchy. Therefore it would be useless to pass a
         -- 'SettlementInstruction' to settle a trade between 'masterAgreement.party1' and itself. There is still
         -- benefit in using the 'Dvp' template's 'Process' choice (e.g. validation checks), so we create a dummy account
-        -- to allow 'masterAgreement.party1' to settle with itself. TODO: can this can simplified?
+        -- to allow 'masterAgreement.party1' to settle with itself. TODO: can this can be simplified?
         now <- getTime
         let dummyAccountId  = Id with
               signatories = Set.singleton masterAgreement.party1
