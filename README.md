@@ -56,13 +56,13 @@ daml build --project-root lib-finance/model
 Then build the core models:
 
 ```
-daml build --project-root core
+daml build --project-root core-model/main
 ```
 
 There is also a triggers module which can be used for automation of workflows, which can be built using:
 
 ```
-daml build --project-root trigger
+daml build --project-root core-trigger/main
 ```
 
 ## Documentation
@@ -70,3 +70,12 @@ daml build --project-root trigger
 Please use the [example code](examples/src/Synfini/AccountHierarchy/Examples.daml) to understand the structure of the
 Daml model and how to use the templates. For each example, there is an accompanying diagram found
 [here](examples/diagrams). The public APIs are documented using doc-comments in the Daml source code.
+
+## Project structure
+
+The project is divided into multiple sub-module directories. Sub-module directories ending with "model" contain
+the workflows (i.e. templates to be uploaded to the ledger), whereas those ending with "trigger" are for automation
+of these workflows using Daml triggers. The core account hierarchy templates are defined under `core-model`,
+while the automation for these templates is in `core-trigger`. New sub-modules may be developed in
+future to cater for specific use-cases. Examples could include proxy voting capability with `proxy-model` and `proxy-trigger`
+sub-modules. The project is open to input on new sub-modules from the community.

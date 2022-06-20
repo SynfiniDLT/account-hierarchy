@@ -1,7 +1,18 @@
 -- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
 -- SPDX-License-Identifier: Apache-2.0
 
-module Synfini.AccountHierarchy.Allocation where
+module Synfini.AccountHierarchy.Allocation(
+  AllocationChangeRule(..),
+  AllocationChangeRule_ConfirmNextAllocation(..),
+  AllocationChangeRule_ConfirmNextDeallocation(..),
+  AllocationDetails(..),
+  DeallocationDetails(..),
+  AllocationChangeInstruction(..),
+  AllocationChangeInstruction_Archive(..),
+  AllocationChangeInstruction_ConfirmNextAllocation(..),
+  AllocationChangeInstruction_ConfirmNextDeallocation(..),
+  AllocationChangeInstruction_Process(..)
+) where
 
 import DA.Action (unless)
 import DA.Assert ((===))
@@ -88,12 +99,6 @@ assertAtHierarchyTop account = do
   rootCustodyAgreement <- lookupByKey @CustodyAgreement topCustodyAgreement.parent.id
   rootCustodyAgreement === None
 
-assertSameParent : Account -> Account -> Update ()
-assertSameParent acc1 acc2 = do
-  (_, custodyAgreement1) <- fetchByKey @CustodyAgreement acc1.id
-  (_, custodyAgreement2) <- fetchByKey @CustodyAgreement acc2.id
-  custodyAgreement1.parent === custodyAgreement2.parent
-
 getParent : Account -> Update Account
 getParent account = do
   (_, custodyAgreement) <- fetchByKey @CustodyAgreement account.id
@@ -124,27 +129,35 @@ template AllocationChangeInstruction
     let (confirmedDeallocations, unconfirmedDeallocations) = splitDeallocations deallocations
         (confirmedAllocations, unconfirmedAllocations) = splitAllocations allocations
 
+    choice AllocationChangeInstruction_Archive : ()
+      controller masterAgreement.id.signatories
+      do
+        pure ()
+
     -- | Account signatories of the next unconfirmed allocation can choose to consent to the allocation change. Can
     -- only be exercised after all deallocations are confirmed.
     choice AllocationChangeInstruction_ConfirmNextAllocation : ContractId AllocationChangeInstruction
-      controller optional Set.empty (\allocation -> allocation.account.id.signatories) (LT.head unconfirmedAllocations)
+      controller (head unconfirmedAllocations).account.id.signatories
       do
         unconfirmedDeallocations === []
         let nextAllocation = head unconfirmedAllocations
-        create this with allocations = confirmedAllocations <> ((nextAllocation with confirmed = True) :: tail unconfirmedAllocations)
+        create this with
+          allocations = confirmedAllocations <> ((nextAllocation with confirmed = True) :: tail unconfirmedAllocations)
 
     -- | Account signatories of the next unconfirmed deallocation can choose to consent to the allocation change.
     choice AllocationChangeInstruction_ConfirmNextDeallocation : ContractId AllocationChangeInstruction
       with
-        depositCid : ContractId AssetDeposit -- ^ Deposit to archived during exercise of 'AllocationChangeInstruction_Process'.
-      controller optional Set.empty (\deallocation -> deallocation.account.id.signatories) (LT.head unconfirmedDeallocations)
+        depositCid : ContractId AssetDeposit -- ^ Deposit to archived during exercise of
+        -- 'AllocationChangeInstruction_Process'.
+      controller (head unconfirmedDeallocations).account.id.signatories
       do
         allocation <- fetch depositCid
         allocation.asset === asset
         let nextDeallocation = head unconfirmedDeallocations
         allocation.account === nextDeallocation.account
         let updatedNextDeallocation = nextDeallocation with depositCid = Some depositCid
-        create this with deallocations = confirmedDeallocations <> (updatedNextDeallocation :: tail unconfirmedDeallocations)
+        create this with
+          deallocations = confirmedDeallocations <> (updatedNextDeallocation :: tail unconfirmedDeallocations)
 
     -- | Execute the allocation changes.
     choice AllocationChangeInstruction_Process : [ContractId AssetDeposit]

@@ -19,20 +19,19 @@ import Synfini.AccountHierarchy.Custody
 import Synfini.AccountHierarchy.Trade
 
 {-
-The following examples demonstrate the design and functionality of the Account Hierarchcy library. It assumes the
+The following examples demonstrate the design and functionality of the Account Hierarchsy library. It assumes the
 reader is familiar with the basics of FinLib such as 'Account', 'Asset' and 'AssetDepoit'.
 -}
 
 {-
 In the simplest possible case, an account hierarchy is setup involving a single custodian. At the top of any account
 hierarchy is the legal owner of assets, sitting beneath this are the beneficial owners. In this case, Acme is the
-legal owner of 50 units of Morley Corporation Stock (MLY), held at the Central Securities Depository (CSD). The CSD
-creates a 'CustodianRole' contract for Acme which allows Acme to delegate beneficial ownership of the assets (held in
-Acme's account at the CSD) to other parties. A propose-accept workflow is initiated by Alice to request Acme to act as
-a custodian for her. Since Acme has a 'CustodianRole' it is able to accept the proposal. As a result, a 'CustodyAgreement'
-contract is created which makes Alice's account a child of Acme's account. This means that Alice has only beneficial
-ownership of any 'AssetDeposit's held in her account, and these 'AssetDeposit's represent an allocation to Alice of
-some portition of the assets held in Acme's account.
+legal owner of 50 units of Morley Corporation Stock (MLY), held in an account at the Central Securities Depository
+(CSD). The CSD creates a 'CustodianRole' contract for Acme which allows Acme to delegate beneficial ownership of assets
+in this account to other parties. By exercising a choice on the 'CustodianRole' contract, Acme is able to enter a
+'CustodyAgreement' contract with Alice, making Alice's account a child of Acme's account. This means that any
+'AssetDeposit's in Alice's account represent an allocation to Alice of some portition of the assets held in Acme's
+account.
 -}
 example1 : Script ()
 example1 = do
@@ -48,17 +47,14 @@ example1 = do
     acmeAccountId = Id with signatories = Set.fromList [csd], label = "Acme@CSD", version = 0
     acmeAccount = Account with id = acmeAccountId, provider = csd, owner = acme
     acmeDeposit = AssetDeposit with account = acmeAccount, asset = morleyStock, observers = Set.empty
-    acmeCustodianRole = CustodianRole with account = acmeAccount, observers = Set.empty
+    acmeCustodianRole = CustodianRole with parent = acmeAccount, observers = Set.empty
 
     aliceAccountId = Id with signatories = Set.fromList [acme], label = "Alice@Acme", version = 0
     aliceAccount = Account with id = aliceAccountId, provider = acme, owner = alice
     aliceDeposit = AssetDeposit with account = aliceAccount, asset = morleyStock, observers = Set.empty
 
   acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
-
-  aliceCustodyRequestCid <- submit alice do createCmd CustodyRequest with account = aliceAccount, parent = acmeAccount
-  submit acme do
-    exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptCustodyRequest with custodyRequestCid = aliceCustodyRequestCid
+  submit acme do exerciseCmd acmeCustodianRoleCid CustodianRole_EnterCustodyAgreement with account = aliceAccount
 
   submit csd do createCmd acmeDeposit
   submit acme do createCmd aliceDeposit
@@ -95,12 +91,12 @@ example2 = do
     acmeAccountId = Id with signatories = Set.fromList [csd], label = "Acme@CSD", version = 0
     acmeAccount = Account with id = acmeAccountId, provider = csd, owner = acme
     acmeDeposit = AssetDeposit with account = acmeAccount, asset = morleyStock, observers = Set.empty
-    acmeCustodianRole = CustodianRole with account = acmeAccount, observers = Set.empty
+    acmeCustodianRole = CustodianRole with parent = acmeAccount, observers = Set.empty
 
     ajaxAccountId = Id with signatories = Set.fromList [acme], label = "Ajax@Acme", version = 0
     ajaxAccount = Account with id = ajaxAccountId, provider = acme, owner = ajax
     ajaxDeposit = AssetDeposit with account = ajaxAccount, asset = morleyStock, observers = Set.empty
-    ajaxCustodianRole = CustodianRole with account = ajaxAccount, observers = Set.empty
+    ajaxCustodianRole = CustodianRole with parent = ajaxAccount, observers = Set.empty
 
     aliceAccountId = Id with signatories = Set.fromList [ajax], label = "Alice@Ajax", version = 0
     aliceAccount = Account with id = aliceAccountId, provider = ajax, owner = alice
@@ -115,15 +111,11 @@ example2 = do
   acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
   ajaxCustodianRoleCid <- submit acme do createCmd ajaxCustodianRole
 
-  ajaxCustodyRequestCid <- submit ajax do createCmd CustodyRequest with account = ajaxAccount, parent = acmeAccount
-  ajaxCustodyCid <- submit acme do
-    exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptCustodyRequest with custodyRequestCid = ajaxCustodyRequestCid
+  ajaxCustodyCid <- submit acme do exerciseCmd acmeCustodianRoleCid CustodianRole_EnterCustodyAgreement with account = ajaxAccount
   submit ajax do
     exerciseCmd ajaxCustodyCid CustodyAgreement_SetObservers with newObservers = Set.fromList [csd]
 
-  aliceCustodyRequestCid <- submit alice do createCmd CustodyRequest with account = aliceAccount, parent = ajaxAccount
-  aliceCustodyCid <- submit ajax do
-    exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptCustodyRequest with custodyRequestCid = aliceCustodyRequestCid
+  aliceCustodyCid <- submit ajax do exerciseCmd ajaxCustodianRoleCid CustodianRole_EnterCustodyAgreement with account = aliceAccount
   submit alice do
     exerciseCmd aliceCustodyCid CustodyAgreement_SetObservers with newObservers = Set.fromList [csd]
 
@@ -172,12 +164,12 @@ example3 = do
     acmeDefaultAccountId = Id with signatories = Set.fromList [acme], label = "Acme@Acme", version = 0
     acmeDefaultAccount = Account with id = acmeDefaultAccountId, owner = acme, provider = acme
     acmeDeposit = AssetDeposit with account = acmeAccount, asset = morleyStock, observers = Set.empty
-    acmeCustodianRole = CustodianRole with account = acmeAccount, observers = Set.empty
+    acmeCustodianRole = CustodianRole with parent = acmeAccount, observers = Set.empty
 
     ajaxAccountId = Id with signatories = Set.fromList [acme], label = "Ajax@Acme", version = 0
     ajaxAccount = Account with id = ajaxAccountId, provider = acme, owner = ajax
     ajaxDeposit = AssetDeposit with account = ajaxAccount, asset = morleyStock, observers = Set.empty
-    ajaxCustodianRole = CustodianRole with account = ajaxAccount, observers = Set.empty
+    ajaxCustodianRole = CustodianRole with parent = ajaxAccount, observers = Set.empty
 
     aliceAccountId = Id with signatories = Set.fromList [ajax], label = "Alice@Ajax", version = 0
     aliceAccount = Account with id = aliceAccountId, provider = ajax, owner = alice
@@ -197,18 +189,9 @@ example3 = do
   acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
   ajaxCustodianRoleCid <- submit acme do createCmd ajaxCustodianRole
 
-  acmeCustodyRequestCid <- submit acme do
-    createCmd CustodyRequest with account = acmeDefaultAccount, parent = acmeAccount
-  submit acme do
-    exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptCustodyRequest with custodyRequestCid = acmeCustodyRequestCid
-
-  ajaxCustodyRequestCid <- submit ajax do createCmd CustodyRequest with account = ajaxAccount, parent = acmeAccount
-  ajaxCustodyCid <- submit acme do
-    exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptCustodyRequest with custodyRequestCid = ajaxCustodyRequestCid
-
-  aliceCustodyRequestCid <- submit alice do createCmd CustodyRequest with account = aliceAccount, parent = ajaxAccount
-  aliceCustodyCid <- submit ajax do
-    exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptCustodyRequest with custodyRequestCid = aliceCustodyRequestCid
+  submit acme do exerciseCmd acmeCustodianRoleCid CustodianRole_EnterCustodyAgreement with account = acmeDefaultAccount
+  ajaxCustodyCid <- submit acme do exerciseCmd acmeCustodianRoleCid CustodianRole_EnterCustodyAgreement with account = ajaxAccount
+  aliceCustodyCid <- submit ajax do exerciseCmd ajaxCustodianRoleCid CustodianRole_EnterCustodyAgreement with account = aliceAccount
 
   submit csd do
     createCmd AllocationChangeInstruction with
@@ -343,13 +326,13 @@ example4 = do
     acmeAccount = Account with id = acmeAccountId, provider = csd, owner = acme
     acmeMorleyDeposit = AssetDeposit with account = acmeAccount, asset = morleyStock, observers = Set.empty
     acmeCashDeposit = AssetDeposit with account = acmeAccount, asset = twoThousandDollars, observers = Set.empty
-    acmeCustodianRole = CustodianRole with account = acmeAccount, observers = Set.empty
+    acmeCustodianRole = CustodianRole with parent = acmeAccount, observers = Set.empty
 
     ajaxAccountId = Id with signatories = Set.fromList [acme], label = "Ajax@Acme", version = 0
     ajaxAccount = Account with id = ajaxAccountId, provider = acme, owner = ajax
     ajaxMorleyDeposit = AssetDeposit with account = ajaxAccount, asset = morleyStock, observers = Set.empty
     ajaxCashDeposit = AssetDeposit with account = ajaxAccount, asset = twoThousandDollars, observers = Set.empty
-    ajaxCustodianRole = CustodianRole with account = ajaxAccount, observers = Set.empty
+    ajaxCustodianRole = CustodianRole with parent = ajaxAccount, observers = Set.empty
 
     aliceAccountId = Id with signatories = Set.fromList [ajax], label = "Alice@Ajax", version = 0
     aliceAccount = Account with id = aliceAccountId, provider = ajax, owner = alice
@@ -364,17 +347,9 @@ example4 = do
   acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
   ajaxCustodianRoleCid <- submit acme do createCmd ajaxCustodianRole
 
-  ajaxCustodyRequestCid <- submit ajax do createCmd CustodyRequest with account = ajaxAccount, parent = acmeAccount
-  ajaxCustodyCid <- submit acme do
-    exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptCustodyRequest with custodyRequestCid = ajaxCustodyRequestCid
-
-  aliceCustodyRequestCid <- submit alice do createCmd CustodyRequest with account = aliceAccount, parent = ajaxAccount
-  aliceCustodyCid <- submit ajax do
-    exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptCustodyRequest with custodyRequestCid = aliceCustodyRequestCid
-
-  bobCustodyRequestCid <- submit bob do createCmd CustodyRequest with account = bobAccount, parent = ajaxAccount
-  bobCustodyCid <- submit ajax do
-    exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptCustodyRequest with custodyRequestCid = bobCustodyRequestCid
+  ajaxCustodyCid <- submit acme do exerciseCmd acmeCustodianRoleCid CustodianRole_EnterCustodyAgreement with account = ajaxAccount
+  aliceCustodyCid <- submit ajax do exerciseCmd ajaxCustodianRoleCid CustodianRole_EnterCustodyAgreement with account = aliceAccount
+  bobCustodyCid <- submit ajax do exerciseCmd ajaxCustodianRoleCid CustodianRole_EnterCustodyAgreement with account = bobAccount
 
   -- For brevity, the deposits are created directly rather than via 'AllocationChangeInstruction's
   submit csd do createCmd acmeMorleyDeposit
@@ -449,7 +424,7 @@ example5 = do
       observers = Set.empty
       ctrls = Set.fromList [ajax]
     acmeDeposit = AssetDeposit with account = acmeAccount, asset = morleyStock, observers = Set.empty
-    acmeCustodianRole = CustodianRole with account = acmeAccount, observers = Set.empty
+    acmeCustodianRole = CustodianRole with parent = acmeAccount, observers = Set.empty
 
     ajaxAccountId = Id with signatories = Set.fromList [csd], label = "Ajax@CSD", version = 0
     ajaxAccount = Account with id = ajaxAccountId, provider = csd, owner = ajax
@@ -458,7 +433,7 @@ example5 = do
       observers = Set.empty
       ctrls = Set.fromList [acme]
     ajaxDeposit = AssetDeposit with account = ajaxAccount, asset = twoThousandDollars, observers = Set.fromList [acme]
-    ajaxCustodianRole = CustodianRole with account = ajaxAccount, observers = Set.empty
+    ajaxCustodianRole = CustodianRole with parent = ajaxAccount, observers = Set.empty
 
     aliceAccountId = Id with signatories = Set.fromList [acme], label = "Alice@Acme", version = 0
     aliceAccount = Account with id = aliceAccountId, provider = acme, owner = alice
@@ -499,13 +474,9 @@ example5 = do
   acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
   ajaxCustodianRoleCid <- submit csd do createCmd ajaxCustodianRole
 
-  aliceCustodyRequestCid <- submit alice do createCmd CustodyRequest with account = aliceAccount, parent = acmeAccount
-  submit acme do
-    exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptCustodyRequest with custodyRequestCid = aliceCustodyRequestCid
-
-  bobCustodyRequestCid <- submit bob do createCmd CustodyRequest with account = bobAccount, parent = ajaxAccount
+  submit acme do exerciseCmd acmeCustodianRoleCid CustodianRole_EnterCustodyAgreement with account = aliceAccount
   bobCustodyCid <- submit ajax do
-    exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptCustodyRequest with custodyRequestCid = bobCustodyRequestCid
+    exerciseCmd ajaxCustodianRoleCid CustodianRole_EnterCustodyAgreement with account = bobAccount
   submit bob do
     exerciseCmd bobCustodyCid CustodyAgreement_SetObservers with newObservers = Set.fromList [acme]
 
@@ -515,14 +486,15 @@ example5 = do
   ajaxDepositCid <- submit csd do createCmd ajaxDeposit
   bobDepositCid <- submit ajax do createCmd bobDeposit
 
-  custodialDvpCid <- submit csd $
+  custodialDvpCid <- submit csd do
     -- Propose a Dvp between the legal owners of the assets (Acme and Ajax) and corresponding allocations to the
     -- the beneficial owners (Alice and Bob)
-    createCmd CustodialDvpSettlementRule with masterAgreement *>
-    createCmd CustodialDvp with
+    createCmd CustodialDvpSettlementRule with masterAgreement
+    cid <- createCmd CustodialDvp with
       dvp
       beneficiary1 = alice
       beneficiary2 = bob
+    pure cid
 
   submit csd do
     -- As the legal owners of the assets, Acme and Ajax must settle with eachother
@@ -558,32 +530,38 @@ example5 = do
       observers = Set.empty
     pure ()
 
-  deliverySettlementCid <- submit acme $ exerciseByKeyCmd
-    @SettlementInstruction
-    (masterAgreementId, tradeId, morleyId)
-    SettlementInstruction_AllocateNext with depositCid = acmeDepositCid, ctrl = acme
-  paymentSettlementCid <- submit ajax $ exerciseByKeyCmd
-    @SettlementInstruction
-    (masterAgreementId, tradeId, audId)
-    SettlementInstruction_AllocateNext with depositCid = ajaxDepositCid, ctrl = ajax
+  deliverySettlementCid <- submit acme do
+    exerciseByKeyCmd
+      @SettlementInstruction
+      (masterAgreementId, tradeId, morleyId)
+      SettlementInstruction_AllocateNext with depositCid = acmeDepositCid, ctrl = acme
+  paymentSettlementCid <- submit ajax do
+    exerciseByKeyCmd
+      @SettlementInstruction
+      (masterAgreementId, tradeId, audId)
+      SettlementInstruction_AllocateNext with depositCid = ajaxDepositCid, ctrl = ajax
 
-  submit acme $ exerciseByKeyCmd
-    @AllocationChangeInstruction
-    (masterAgreementId, tradeId, morleyId)
-    AllocationChangeInstruction_ConfirmNextDeallocation with depositCid = aliceDepositCid
-  deliveryAllocationCid <- submit ajax $ exerciseByKeyCmd
-    @AllocationChangeInstruction
-    (masterAgreementId, tradeId, morleyId)
-    AllocationChangeInstruction_ConfirmNextAllocation
+  submit acme do
+    exerciseByKeyCmd
+      @AllocationChangeInstruction
+      (masterAgreementId, tradeId, morleyId)
+      AllocationChangeInstruction_ConfirmNextDeallocation with depositCid = aliceDepositCid
+  deliveryAllocationCid <- submit ajax do
+    exerciseByKeyCmd
+      @AllocationChangeInstruction
+      (masterAgreementId, tradeId, morleyId)
+      AllocationChangeInstruction_ConfirmNextAllocation
 
-  submit ajax $ exerciseByKeyCmd
-    @AllocationChangeInstruction
-    (masterAgreementId, tradeId, audId)
-    AllocationChangeInstruction_ConfirmNextDeallocation with depositCid = bobDepositCid
-  paymentAllocationCid <- submit acme $ exerciseByKeyCmd
-    @AllocationChangeInstruction
-    (masterAgreementId, tradeId, audId)
-    AllocationChangeInstruction_ConfirmNextAllocation
+  submit ajax do
+    exerciseByKeyCmd
+      @AllocationChangeInstruction
+      (masterAgreementId, tradeId, audId)
+      AllocationChangeInstruction_ConfirmNextDeallocation with depositCid = bobDepositCid
+  paymentAllocationCid <- submit acme do
+    exerciseByKeyCmd
+      @AllocationChangeInstruction
+      (masterAgreementId, tradeId, audId)
+      AllocationChangeInstruction_ConfirmNextAllocation
 
   submit acme do
     exerciseByKeyCmd @CustodialDvpSettlementRule masterAgreementId CustodialDvpSettlementRule_Process with
@@ -629,12 +607,12 @@ example6 = do
     acmeAccountId = Id with signatories = Set.fromList [csd], label = "Acme@CSD", version = 0
     acmeAccount = Account with id = acmeAccountId, provider = csd, owner = acme
     acmeDeposit = AssetDeposit with account = acmeAccount, asset = morleyStock, observers = Set.empty
-    acmeCustodianRole = CustodianRole with account = acmeAccount, observers = Set.empty
+    acmeCustodianRole = CustodianRole with parent = acmeAccount, observers = Set.empty
 
     ajaxAccountId = Id with signatories = Set.fromList [acme], label = "Ajax@Acme", version = 0
     ajaxAccount = Account with id = ajaxAccountId, provider = acme, owner = ajax
     ajaxDeposit = AssetDeposit with account = ajaxAccount, asset = morleyStock, observers = Set.empty
-    ajaxCustodianRole = CustodianRole with account = ajaxAccount, observers = Set.empty
+    ajaxCustodianRole = CustodianRole with parent = ajaxAccount, observers = Set.empty
 
     aliceAccountId = Id with signatories = Set.fromList [ajax], label = "Alice@Ajax", version = 0
     aliceAccount = Account with id = aliceAccountId, provider = ajax, owner = alice
@@ -666,23 +644,18 @@ example6 = do
   acmeCustodianRoleCid <- submit csd do createCmd acmeCustodianRole
   ajaxCustodianRoleCid <- submit acme do createCmd ajaxCustodianRole
 
-  ajaxCustodyRequestCid <- submit ajax do createCmd CustodyRequest with account = ajaxAccount, parent = acmeAccount
   ajaxCustodyCid <- submit acme do
-    exerciseCmd acmeCustodianRoleCid CustodianRole_AcceptCustodyRequest with custodyRequestCid = ajaxCustodyRequestCid
+    exerciseCmd acmeCustodianRoleCid CustodianRole_EnterCustodyAgreement with account = ajaxAccount
   submit ajax do
     exerciseCmd ajaxCustodyCid CustodyAgreement_SetObservers with newObservers = Set.fromList [csd]
   ajaxLifecycleRuleCid <- submit acme do createCmd CustodialLifecycleRule with account = ajaxAccount
 
-  aliceCustodyRequestCid <- submit alice do createCmd CustodyRequest with account = aliceAccount, parent = ajaxAccount
-  aliceCustodyCid <- submit ajax do
-    exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptCustodyRequest with custodyRequestCid = aliceCustodyRequestCid
+  aliceCustodyCid <- submit ajax do exerciseCmd ajaxCustodianRoleCid CustodianRole_EnterCustodyAgreement with account = aliceAccount
   submit alice do
     exerciseCmd aliceCustodyCid CustodyAgreement_SetObservers with newObservers = Set.fromList [csd]
   aliceLifecycleRuleCid <- submit ajax do createCmd CustodialLifecycleRule with account = aliceAccount
 
-  bobCustodyRequestCid <- submit bob do createCmd CustodyRequest with account = bobAccount, parent = ajaxAccount
-  bobCustodyCid <- submit ajax do
-    exerciseCmd ajaxCustodianRoleCid CustodianRole_AcceptCustodyRequest with custodyRequestCid = bobCustodyRequestCid
+  bobCustodyCid <- submit ajax do exerciseCmd ajaxCustodianRoleCid CustodianRole_EnterCustodyAgreement with account = bobAccount
   submit bob do
     exerciseCmd bobCustodyCid CustodyAgreement_SetObservers with newObservers = Set.fromList [csd]
   bobLifecycleRuleCid <- submit ajax do createCmd CustodialLifecycleRule with account = bobAccount

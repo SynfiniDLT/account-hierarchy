@@ -1,0 +1,432 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+{-# LANGUAGE ApplicativeDo #-}
+
+module Synfini.AccountHierarchy.Allocation.Test where
+
+import DA.Assert ((===))
+import DA.Finance.Asset
+import DA.Finance.Types
+import qualified DA.Map as Map
+import qualified DA.Optional as O
+import qualified DA.Set as Set
+import Daml.Script
+import Synfini.AccountHierarchy.Allocation
+import Synfini.AccountHierarchy.Custody
+import Synfini.AccountHierarchy.TestUtils
+
+test_AllocationChangeInstruction_observers : Script ()
+test_AllocationChangeInstruction_observers = withParties $ \parties -> do
+  let deallocation = DeallocationDetails with
+        account = acc parties.alice parties.fred parties.fred
+        depositCid = None
+  let allocation = AllocationDetails with
+        account = acc parties.bob parties.fred parties.fred
+        confirmed = False
+  let asset = Asset with
+        id = Id Set.empty "a" 0
+        quantity = 1.0
+  let masterAgreement = MasterAgreement with
+        id = Id (Set.fromList [parties.fred]) "m" 0
+        party1 = parties.charlie
+        party2 = parties.david
+  let allocationChangeInstruction = AllocationChangeInstruction with
+        asset
+        masterAgreement
+        tradeId = Id (Set.fromList [parties.fred]) "t" 0
+        deallocations = [deallocation]
+        allocations = [allocation]
+        observers = Set.fromList [parties.eve]
+  Set.fromList (observer allocationChangeInstruction) === Set.fromList [
+      parties.alice,
+      parties.bob, 
+      parties.charlie,
+      parties.david,
+      parties.eve
+    ]
+
+account_ab, account_bc, account_cd, account_de, account_df : Parties -> Account
+account_ab parties = acc parties.alice parties.alice parties.bob
+account_bc parties = acc parties.bob parties.bob parties.charlie
+account_cd parties = acc parties.charlie parties.charlie parties.david
+account_de parties = acc parties.david parties.david parties.eve
+account_df parties = acc parties.david parties.david parties.fred
+
+assetId_x, assetId_y : Id
+assetId_x = Id with
+  signatories = Set.empty
+  label = "x"
+  version = 0
+assetId_y = Id with
+  signatories = Set.empty
+  label = "y"
+  version = 0
+
+asset_x : Decimal -> Asset
+asset_x quantity = Asset with
+  id = assetId_x
+  quantity
+
+deposit_bc_x, deposit_cd_x, deposit_de_x, deposit_df_x, deposit_bc_y : Parties -> Decimal -> AssetDeposit
+deposit_bc_x parties quantity = AssetDeposit with
+  asset = Asset with
+    id = assetId_x
+    quantity
+  account = account_bc parties
+  observers = Set.fromList (allParties parties)
+deposit_cd_x parties quantity = (deposit_bc_x parties quantity) with account = account_cd parties
+deposit_de_x parties quantity = (deposit_bc_x parties quantity) with account = account_de parties
+deposit_df_x parties quantity = (deposit_bc_x parties quantity) with account = account_df parties
+deposit_bc_y parties quantity = (deposit_bc_x parties quantity) with asset.id = assetId_y
+
+test_AllocationChangeInstruction_singleDeallocation : Script ()
+test_AllocationChangeInstruction_singleDeallocation = withParties $ \parties -> do
+  let custodyAgreement = CustodyAgreement with
+        parent = account_ab parties
+        account = account_bc parties
+        observers = Set.fromList [parties.charlie]
+  let deallocation = DeallocationDetails with
+        account = account_bc parties
+        depositCid = None
+  let deposit_bc_x_1 = deposit_bc_x parties 1.0
+  let masterAgreement = MasterAgreement with
+        id = Id (Set.fromList [parties.alice]) "m" 0
+        party1 = parties.charlie
+        party2 = parties.david
+  let allocationChangeInstruction = AllocationChangeInstruction with
+        asset = deposit_bc_x_1.asset
+        masterAgreement
+        tradeId = Id Set.empty "t" 0
+        deallocations = [deallocation]
+        allocations = []
+        observers = Set.empty
+
+  submitMulti [parties.alice, parties.bob] [] do createCmd custodyAgreement
+  depositCid <- submit parties.bob do createCmd (deposit_bc_x parties 1.0)
+  depositCid_badQuantity <- submit parties.bob do createCmd (deposit_bc_x parties 1.1)
+  depositCid_badAssetId <- submit parties.bob do createCmd (deposit_bc_y parties 1.0)
+  depositCid_badAccount <- submit parties.charlie do createCmd (deposit_cd_x parties 1.0)
+
+  submit parties.alice do createCmd allocationChangeInstruction
+  submitMustFail parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = depositCid_badQuantity
+  submitMustFail parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = depositCid_badAssetId
+  submitMustFail parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = depositCid_badAccount
+  submit parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = depositCid
+  result <- submit parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_Process
+  result === []
+  depositCids <- fmap fst <$> query @AssetDeposit (stakeholder allocationChangeInstruction)
+  Set.fromList depositCids === Set.fromList [depositCid_badQuantity, depositCid_badAssetId, depositCid_badAccount]
+  allocationChangeInstructions <- query @AllocationChangeInstruction (stakeholder allocationChangeInstruction)
+  allocationChangeInstructions === []
+
+test_AllocationChangeInstruction_multipleDeallocation : Script ()
+test_AllocationChangeInstruction_multipleDeallocation = withParties $ \parties -> do
+  let custodyAgreement1 = CustodyAgreement with
+        parent = account_ab parties
+        account = account_bc parties
+        observers = Set.fromList [parties.alice]
+  let custodyAgreement2 = CustodyAgreement with
+        parent = account_bc parties
+        account = account_cd parties
+        observers = Set.fromList [parties.alice]
+  let deallocation1 = DeallocationDetails with
+        account = account_bc parties
+        depositCid = None
+  let deallocation2 = DeallocationDetails with
+        account = account_cd parties
+        depositCid = None
+  let deposit_bc_x_1 = deposit_bc_x parties 1.0
+  let deposit_cd_x_1 = deposit_cd_x parties 1.0
+  let masterAgreement = MasterAgreement with
+        id = Id (Set.fromList [parties.alice]) "m" 0
+        party1 = parties.charlie
+        party2 = parties.david
+  let allocationChangeInstruction = AllocationChangeInstruction with
+        asset = deposit_bc_x_1.asset
+        masterAgreement
+        tradeId = Id Set.empty "t" 0
+        deallocations = [deallocation2, deallocation1]
+        allocations = []
+        observers = Set.empty
+
+  submitMulti (allParties parties) [] $
+    createCmd custodyAgreement1 *>
+    createCmd custodyAgreement2
+  depositCid1 <- submit parties.bob do createCmd deposit_bc_x_1
+  depositCid2 <- submit parties.charlie do createCmd deposit_cd_x_1
+
+  submit parties.alice do createCmd allocationChangeInstruction
+  submitMustFail parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = depositCid1
+  submit parties.charlie do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = depositCid2
+  submit parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextDeallocation with
+      depositCid = depositCid1
+  result <- submit parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_Process
+  result === []
+  deposits <- query @AssetDeposit (stakeholder allocationChangeInstruction)
+  deposits === []
+  allocationChangeInstructions <- query @AllocationChangeInstruction (stakeholder allocationChangeInstruction)
+  allocationChangeInstructions === []
+
+test_AllocationChangeInstruction_invalidTreeStructure : Script ()
+test_AllocationChangeInstruction_invalidTreeStructure = withParties $ \parties -> do
+  let custodyAgreement_root = CustodyAgreement with
+        parent = account_ab parties
+        account = account_bc parties
+        observers = Set.fromList [parties.alice]
+  let custodyAgreement_rootChild = CustodyAgreement with
+        parent = account_bc parties
+        account = account_cd parties
+        observers = Set.fromList [parties.alice]
+  let custodyAgreement_rootGrandchild1 = CustodyAgreement with
+        parent = account_cd parties
+        account = account_de parties
+        observers = Set.fromList [parties.alice]
+  let custodyAgreement_rootGrandchild2 = CustodyAgreement with
+        parent = account_cd parties
+        account = account_df parties
+        observers = Set.fromList [parties.alice]
+  let custodyAgreement_root_otherHierarchy =  custodyAgreement_root with
+        parent.id.version = 1
+        account.id.version = 1
+  let custodyAgreement_rootChild_otherHierarchy = custodyAgreement_rootChild with
+        parent.id.version = 1
+        account.id.version = 1
+  let custodyAgreement_rootGrandchild1_otherHierarchy = custodyAgreement_rootGrandchild1 with
+        parent.id.version = 1
+        account.id.version = 1
+  let custodyAgreement_rootGrandchild2_otherHierarchy = custodyAgreement_rootGrandchild2 with
+        parent.id.version = 1
+        account.id.version = 1
+  let davidCustodianRole = CustodianRole with
+        parent = account_cd parties
+        observers = Set.fromList [parties.alice]
+  depositCid_bc_x_1 <- submit parties.bob do createCmd $ deposit_bc_x parties 1.0
+  depositCid_cd_x_1 <- submit parties.charlie do createCmd $ deposit_cd_x parties 1.0
+  depositCid_de_x_1 <- submit parties.david do createCmd $ deposit_de_x parties 1.0
+  depositCid_de_x_2 <- submit parties.david do createCmd $ deposit_de_x parties 2.0
+  depositCid_df_x_1 <- submit parties.david do createCmd $ deposit_df_x parties 1.0
+  let deallocation_root = DeallocationDetails with
+        account = account_bc parties
+        depositCid = Some depositCid_bc_x_1
+  let deallocation_rootChild = DeallocationDetails with
+        account = account_cd parties
+        depositCid = Some depositCid_cd_x_1
+  let deallocation_rootGrandchild1 = DeallocationDetails with
+        account = account_de parties
+        depositCid = Some depositCid_de_x_1
+  let deallocation_rootGrandchild2 = DeallocationDetails with
+        account = account_df parties
+        depositCid = Some depositCid_df_x_1
+  let allocation_root = AllocationDetails with
+        account = deallocation_root.account
+        confirmed = True
+  let allocation_rootChild = AllocationDetails with
+        account = deallocation_rootChild.account
+        confirmed = True
+  let allocation_rootGrandchild1 = AllocationDetails with
+        account = deallocation_rootGrandchild1.account
+        confirmed = True
+  let allocation_rootGrandchild2 = AllocationDetails with
+        account = deallocation_rootGrandchild2.account
+        confirmed = True
+  let allocation_rootGrandchild2_otherHierarchy = allocation_rootGrandchild2 with account.id.version = 1
+  let masterAgreement = MasterAgreement with
+        id = Id (Set.fromList [parties.alice]) "m" 0
+        party1 = parties.charlie
+        party2 = parties.david
+  let deallocateInstruction = AllocationChangeInstruction with
+        asset = asset_x 1.0
+        masterAgreement
+        tradeId = Id Set.empty "deallocate" 0
+        deallocations = [deallocation_rootGrandchild1, deallocation_rootChild, deallocation_root]
+        allocations = []
+        observers = Set.empty
+  let deallocateInstruction_noLeaf = deallocateInstruction with
+        tradeId.label = "deallocate.noLeaf"
+        deallocations = [deallocation_rootChild, deallocation_root]
+  let deallocateInstruction_missingTop = deallocateInstruction with
+        tradeId.label = "deallocate.missingTop"
+        deallocations = [deallocation_rootGrandchild1, deallocation_rootChild]
+  let deallocateInstruction_wrongOrder = deallocateInstruction with
+        tradeId.label = "deallocate.wrongOrder"
+        deallocations = [deallocation_rootChild, deallocation_rootGrandchild1, deallocation_root]
+  let allocateInstruction = AllocationChangeInstruction with
+        asset = asset_x 1.0
+        masterAgreement
+        tradeId = Id Set.empty "allocate" 0
+        deallocations = []
+        allocations = [allocation_root, allocation_rootChild, allocation_rootGrandchild1]
+        observers = Set.empty
+  let allocateInstruction_noLeaf = allocateInstruction with
+        tradeId.label = "allocate.noLeaf"
+        allocations = [allocation_root, allocation_rootChild]
+  let allocateInstruction_missingTop = allocateInstruction with
+        tradeId.label = "allocate.missingTop"
+        allocations = [allocation_rootChild, allocation_rootGrandchild1]
+  let allocateInstruction_wrongOrder = allocateInstruction with
+        tradeId.label = "allocate.wrongOrder"
+        allocations = [allocation_root, allocation_rootGrandchild1, allocation_rootChild]
+  let transferInstruction = AllocationChangeInstruction with
+        asset = asset_x 2.0
+        masterAgreement
+        tradeId = Id Set.empty "transfer" 0
+        deallocations = [deallocation_rootGrandchild1 with depositCid = Some depositCid_de_x_2]
+        allocations = [allocation_rootGrandchild2]
+        observers = Set.empty
+  let transferInstruction_noCommonAncestor = transferInstruction with
+        tradeId.label = "transfer.noCommonAncestor"
+        allocations = [allocation_rootGrandchild2_otherHierarchy]
+
+  submitMulti (allParties parties) [] do
+    createCmd custodyAgreement_root
+    createCmd custodyAgreement_rootChild
+    createCmd custodyAgreement_rootGrandchild1
+    createCmd custodyAgreement_rootGrandchild2
+    createCmd custodyAgreement_root_otherHierarchy
+    createCmd custodyAgreement_rootChild_otherHierarchy
+    createCmd custodyAgreement_rootGrandchild1_otherHierarchy
+    createCmd custodyAgreement_rootGrandchild2_otherHierarchy
+    createCmd davidCustodianRole
+    createCmd deallocateInstruction
+    createCmd deallocateInstruction_noLeaf
+    createCmd deallocateInstruction_missingTop
+    createCmd deallocateInstruction_wrongOrder
+    createCmd allocateInstruction
+    createCmd allocateInstruction_noLeaf
+    createCmd allocateInstruction_missingTop
+    createCmd allocateInstruction_wrongOrder
+    createCmd transferInstruction
+    createCmd transferInstruction_noCommonAncestor
+    pure ()
+
+  submitMustFail parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key deallocateInstruction_noLeaf) AllocationChangeInstruction_Process
+  submitMustFail parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key deallocateInstruction_missingTop) AllocationChangeInstruction_Process
+  submitMustFail parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key deallocateInstruction_wrongOrder) AllocationChangeInstruction_Process
+  submit parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key deallocateInstruction) AllocationChangeInstruction_Process
+
+  submitMustFail parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocateInstruction_noLeaf) AllocationChangeInstruction_Process
+  submitMustFail parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocateInstruction_missingTop) AllocationChangeInstruction_Process
+  submitMustFail parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocateInstruction_wrongOrder) AllocationChangeInstruction_Process
+  submit parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocateInstruction) AllocationChangeInstruction_Process
+
+  submitMustFail parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key transferInstruction_noCommonAncestor) AllocationChangeInstruction_Process
+  submit parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key transferInstruction) AllocationChangeInstruction_Process
+  pure ()
+
+test_AllocationChangeInstruction_singleAllocation : Script ()
+test_AllocationChangeInstruction_singleAllocation = withParties $ \parties -> do
+  let custodyAgreement = CustodyAgreement with
+        parent = account_ab parties
+        account = account_bc parties
+        observers = Set.fromList [parties.charlie]
+  let allocation = AllocationDetails with
+        account = account_bc parties
+        confirmed = False
+  let deposit_bc_x_1 = deposit_bc_x parties 1.0
+  let masterAgreement = MasterAgreement with
+        id = Id (Set.fromList [parties.alice]) "m" 0
+        party1 = parties.charlie
+        party2 = parties.david
+  let allocationChangeInstruction = AllocationChangeInstruction with
+        asset = deposit_bc_x_1.asset
+        masterAgreement
+        tradeId = Id Set.empty "t" 0
+        deallocations = []
+        allocations = [allocation]
+        observers = Set.empty
+
+  submitMulti [parties.alice, parties.bob] [] do createCmd custodyAgreement
+
+  submit parties.alice do createCmd allocationChangeInstruction
+  submit parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextAllocation
+  [resultCid] <- submit parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_Process
+  [(depositCid, deposit)] <- query @AssetDeposit (stakeholder allocationChangeInstruction)
+  depositCid === resultCid
+  deposit.asset === allocationChangeInstruction.asset
+  deposit.account === allocation.account
+
+  allocationChangeInstructions <- query @AllocationChangeInstruction (stakeholder allocationChangeInstruction)
+  allocationChangeInstructions === []
+
+test_AllocationChangeInstruction_multipleAllocation : Script ()
+test_AllocationChangeInstruction_multipleAllocation = withParties $ \parties -> do
+  let custodyAgreement1 = CustodyAgreement with
+        parent = account_ab parties
+        account = account_bc parties
+        observers = Set.fromList [parties.alice]
+  let custodyAgreement2 = CustodyAgreement with
+        parent = account_bc parties
+        account = account_cd parties
+        observers = Set.fromList [parties.alice]
+  let allocation1 = AllocationDetails with
+        account = account_bc parties
+        confirmed = False
+  let allocation2 = AllocationDetails with
+        account = account_cd parties
+        confirmed = False
+  let masterAgreement = MasterAgreement with
+        id = Id (Set.fromList [parties.alice]) "m" 0
+        party1 = parties.charlie
+        party2 = parties.david
+  let allocationChangeInstruction = AllocationChangeInstruction with
+        asset = asset_x 1.0
+        masterAgreement
+        tradeId = Id Set.empty "t" 0
+        deallocations = []
+        allocations = [allocation1, allocation2]
+        observers = Set.empty
+
+  submitMulti (allParties parties) [] do
+    createCmd custodyAgreement1
+    createCmd custodyAgreement2
+    pure ()
+
+  submit parties.alice do createCmd allocationChangeInstruction
+  submitMustFail parties.charlie do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextAllocation
+  submit parties.bob do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextAllocation
+  submit parties.charlie do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_ConfirmNextAllocation
+
+  resultCids@[resultCid1, resultCid2] <- submit parties.alice do
+    exerciseByKeyCmd @AllocationChangeInstruction (key allocationChangeInstruction) AllocationChangeInstruction_Process
+  depositsMap <- Map.fromList <$> query @AssetDeposit (stakeholder allocationChangeInstruction)
+  Set.fromList (Map.keys depositsMap) === Set.fromList resultCids
+  let deposit1 = O.fromSome $ Map.lookup resultCid1 depositsMap
+      deposit2 = O.fromSome $ Map.lookup resultCid2 depositsMap
+  deposit1.account === allocation1.account
+  deposit1.asset === allocationChangeInstruction.asset
+  deposit2.account === allocation2.account
+  deposit2.asset === allocationChangeInstruction.asset
+
+  allocationChangeInstructions <- query @AllocationChangeInstruction (stakeholder allocationChangeInstruction)
+  allocationChangeInstructions === []

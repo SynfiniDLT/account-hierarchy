@@ -1,0 +1,46 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+module Synfini.AccountHierarchy.TestUtils where
+
+import DA.Finance.Types
+import qualified DA.Set as Set
+import Daml.Script
+
+data Parties = Parties
+  with
+    alice : Party
+    bob : Party
+    charlie : Party
+    david : Party
+    eve : Party
+    fred : Party
+  deriving (Show, Eq)
+
+allocateParties : Script Parties
+allocateParties = Parties <$>
+  allocateParty "Alice" <*>
+  allocateParty "Bob" <*>
+  allocateParty "Charlie" <*>
+  allocateParty "David" <*>
+  allocateParty "Eve" <*>
+  allocateParty "Fred"
+
+withParties : (Parties -> Script ()) -> Script ()
+withParties test = do
+  parties <- allocateParties
+  test parties
+
+allParties : Parties -> [Party]
+allParties parties = [parties.alice, parties.bob, parties.charlie, parties.david, parties.eve, parties.fred]
+
+acc : IsParties p => p -> Party -> Party -> Account
+acc sigs provider owner =
+  let sigsSet = Set.fromList $ toParties sigs in
+  Account with
+    id = Id with
+      label = "signatories: " <> show sigsSet <> ", provider: " <> show provider <> ", owner: " <> show owner
+      signatories = sigsSet
+      version = 0
+    owner
+    provider

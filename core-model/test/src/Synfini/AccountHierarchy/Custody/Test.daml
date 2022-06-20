@@ -1,0 +1,77 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+module Synfini.AccountHierarchy.Custody.Test where
+
+import DA.Assert
+import qualified DA.Set as Set
+import Daml.Script
+import Synfini.AccountHierarchy.Custody
+import Synfini.AccountHierarchy.TestUtils
+
+test_CustodyAgreement_signatories : Script ()
+test_CustodyAgreement_signatories = withParties $ \parties -> do
+  let custodyAgreement = CustodyAgreement with
+        parent = acc parties.alice parties.charlie parties.charlie
+        account = acc parties.bob parties.charlie parties.charlie
+        observers = Set.fromList [parties.eve]
+  Set.fromList (signatory custodyAgreement) === Set.fromList [parties.alice, parties.bob]
+
+test_CustodyAgreement_observers : Script ()
+test_CustodyAgreement_observers = withParties $ \parties -> do
+  let custodyAgreement = CustodyAgreement with
+        parent = acc parties.alice parties.alice parties.alice
+        account = acc parties.alice parties.alice parties.bob
+        observers = Set.fromList [parties.charlie, parties.david]
+  Set.fromList (observer custodyAgreement) === Set.fromList [parties.bob, parties.charlie, parties.david]
+
+test_CustodyAgreement_ensure : Script ()
+test_CustodyAgreement_ensure = withParties $ \parties -> do
+  let custodyAgreement = CustodyAgreement with
+        parent = acc parties.alice parties.alice parties.alice
+        account = acc parties.alice parties.bob parties.alice
+        observers = Set.empty
+  ensure custodyAgreement === False
+  ensure (custodyAgreement with account.provider = parties.alice) === True
+
+test_CustodyAgreement_SetObservers : Script ()
+test_CustodyAgreement_SetObservers = withParties $ \parties -> do
+  let custodyAgreement = CustodyAgreement with
+        parent = acc parties.alice parties.alice parties.alice
+        account = acc parties.alice parties.alice parties.bob
+        observers = Set.fromList [parties.bob, parties.charlie]
+  custodyAgreementCid <- submitMulti [parties.alice, parties.bob] [] do createCmd custodyAgreement
+  submitMustFail parties.alice do
+    exerciseCmd custodyAgreementCid CustodyAgreement_SetObservers with newObservers = Set.fromList [parties.david]
+  submit parties.bob do
+    exerciseCmd custodyAgreementCid CustodyAgreement_SetObservers with newObservers = Set.fromList [parties.david]
+  [(_, newCustodyAgreement)] <- query parties.alice
+  newCustodyAgreement === custodyAgreement with observers = Set.fromList [parties.david]
+
+test_CustodyRequest_signatories : Script ()
+test_CustodyRequest_signatories = withParties $ \parties -> do
+  let account = acc [parties.alice] parties.bob parties.bob
+  let parent = acc [parties.charlie] parties.david parties.david
+  let custodyRequest = CustodyRequest with account, parent
+  Set.fromList (signatory custodyRequest) === Set.fromList [parties.alice]
+
+test_CustodyRequest_Accept : Script ()
+test_CustodyRequest_Accept = withParties $ \parties -> do
+  let account = acc [parties.alice] parties.bob parties.bob
+  let parent = acc [parties.charlie] parties.bob parties.bob
+  let custodyRequest = CustodyRequest with account, parent
+  custodyRequestCid <- submit parties.alice do createCmd custodyRequest
+  -- Bob doesn't have a CustodianRole so he cannot accept the request
+  submitMustFail parties.bob do
+    exerciseCmd custodyRequestCid CustodyRequest_Accept
+  custodianRoleCid <- submit parties.charlie do createCmd CustodianRole with parent, observers = Set.empty
+  submit parties.bob do
+    exerciseCmd custodyRequestCid CustodyRequest_Accept
+  custodyAgreements <- fmap snd <$> query parties.charlie
+  let expectedCustodyAgreement = CustodyAgreement with
+        parent
+        account
+        observers = Set.empty
+  custodyAgreements === [expectedCustodyAgreement]
+  custodianRoles <- fmap fst <$> query @CustodianRole (allParties parties)
+  custodianRoles === [custodianRoleCid]
