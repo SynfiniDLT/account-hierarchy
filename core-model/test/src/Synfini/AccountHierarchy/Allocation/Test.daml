@@ -53,21 +53,6 @@ account_cd parties = acc parties.charlie parties.charlie parties.david
 account_de parties = acc parties.david parties.david parties.eve
 account_df parties = acc parties.david parties.david parties.fred
 
-assetId_x, assetId_y : Id
-assetId_x = Id with
-  signatories = Set.empty
-  label = "x"
-  version = 0
-assetId_y = Id with
-  signatories = Set.empty
-  label = "y"
-  version = 0
-
-asset_x : Decimal -> Asset
-asset_x quantity = Asset with
-  id = assetId_x
-  quantity
-
 deposit_bc_x, deposit_cd_x, deposit_de_x, deposit_df_x, deposit_bc_y : Parties -> Decimal -> AssetDeposit
 deposit_bc_x parties quantity = AssetDeposit with
   asset = Asset with

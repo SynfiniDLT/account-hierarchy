@@ -17,20 +17,21 @@ import qualified DA.Set as Set
 import qualified DA.Traversable as T
 import Synfini.AccountHierarchy.Allocation
 import Synfini.AccountHierarchy.Custody
+import DA.Tuple (swap)
 
 -- | DvP transaction between two beneficial owners.
 template CustodialDvp
   with
    dvp : Dvp -- ^ DvP between the legal owners of the assets. If legal ownership does not change then 'dvp.party1' is
    -- the same as 'dvp.pary2' and is the owner of the common parent account between beneficial owners.
-   beneficiary1 : Party -- ^ Beneficiary within custody network of 'dvp.party1'.
-   beneficiary2 : Party -- ^ Beneficiary within custody network of 'dvp.party2'.
+   endBuyer : Party -- ^ Beneficiary within custody network of 'dvp.buyer'.
+   endSeller : Party -- ^ Beneficiary within custody network of the other counterparty in 'dvp'.
   where
-    signatory signatory dvp
-    observer observer dvp, beneficiary1, beneficiary2
-    ensure ensure dvp
+    signatory (signatory dvp)
+    observer (observer dvp), endBuyer, endSeller
+    ensure (ensure dvp)
 
-    key key dvp : (Id, Id)
+    key (key dvp) : (Id, Id)
     maintainer maintainer @Dvp key
 
 -- | Definition of how to transfer an asset from one beneficiary to another.
@@ -113,13 +114,12 @@ template CustodialDvpSettlementRule
         dvpDeliveryDepositCids <- archiveDummyAssetDeposits deliveryInstructionCids dvpResult.deliveryDepositCids
 
         -- Perform allocation changes to the beneficiaries
-        let (seller, buyer)
-              | custodialDvp.dvp.buyer == masterAgreement.party1 =
-                ((custodialDvp.beneficiary2, masterAgreement.party2), (custodialDvp.beneficiary1, masterAgreement.party1))
-              | otherwise =
-                ((custodialDvp.beneficiary1, masterAgreement.party1), (custodialDvp.beneficiary2, masterAgreement.party2))
-        custodialDeliveryResults <- mapA (doCustodialSettlement masterAgreement seller buyer) deliveryInstructionContracts
-        custodialPaymentResults <- mapA (doCustodialSettlement masterAgreement buyer seller) paymentInstructionContracts
+        let (seller, buyer) = (if custodialDvp.dvp.buyer == masterAgreement.party1 then identity else swap)
+              (masterAgreement.party1, masterAgreement.party2)
+        let sellers = (custodialDvp.endSeller, seller)
+        let buyers = (custodialDvp.endBuyer, buyer)
+        custodialDeliveryResults <- mapA (doCustodialSettlement masterAgreement sellers buyers) deliveryInstructionContracts
+        custodialPaymentResults <- mapA (doCustodialSettlement masterAgreement buyers sellers) paymentInstructionContracts
 
         -- Deposits are returned with the legal ownership deposits first, followed by the beneficial ownership deposits
         let mergeDeposits (deposits, custodialDeposits) = deposits <> custodialDeposits

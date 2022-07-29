@@ -1,0 +1,81 @@
+-- Copyright (c) 2022 ASX Operations Pty Ltd. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+{-# LANGUAGE ApplicativeDo #-}
+
+module Synfini.AccountHierarchy.Trade.Test where
+
+import DA.Finance.Asset
+import DA.Finance.Trade.Dvp
+import DA.Finance.Types
+import qualified DA.Set as Set
+import Daml.Script
+import Synfini.AccountHierarchy.Allocation
+import Synfini.AccountHierarchy.Custody
+import Synfini.AccountHierarchy.TestUtils
+import Synfini.AccountHierarchy.Trade
+
+test_CustodialDvp_basicTransfer : Script ()
+test_CustodialDvp_basicTransfer = withParties $ \parties -> do
+  let rootAccount = acc [parties.alice, parties.bob] parties.alice parties.bob
+  let delivererAccount = acc [parties.bob, parties.charlie] parties.bob parties.charlie
+  let receiverAccount = acc [parties.bob, parties.david] parties.bob parties.david
+  submitMulti (allParties parties) [] do
+    createCmd $ CustodianRole with parent = rootAccount, observers = Set.empty
+    createCmd $ CustodyAgreement with parent = rootAccount, account = delivererAccount, observers = Set.empty
+    createCmd $ CustodyAgreement with parent = rootAccount, account = receiverAccount, observers = Set.empty
+    pure ()
+  let delivererDeposit = AssetDeposit with
+        asset = asset_x 100.0
+        account = delivererAccount
+        observers = Set.empty
+  delivererDepositCid <- submitMulti (signatory delivererDeposit) [] do createCmd delivererDeposit
+  let deallocation = DeallocationDetails with account = delivererAccount, depositCid = Some delivererDepositCid
+  let allocation = AllocationDetails with account = receiverAccount, confirmed = True
+  let masterAgreement = MasterAgreement with
+        id = Id with
+          label = "Charlie to David"
+          signatories = Set.fromList [parties.bob, parties.charlie, parties.david]
+          version = 0
+        party1 = parties.bob
+        party2 = parties.bob
+  let tradeId = Id with
+        label = "trade1"
+        signatories = Set.empty
+        version = 0
+  let allocationChangeInstruction = AllocationChangeInstruction with
+        asset = delivererDeposit.asset
+        deallocations = [deallocation]
+        allocations = [allocation]
+        masterAgreement
+        tradeId
+        observers = Set.empty
+  allocationChangeCid <- submitMulti (signatory allocationChangeInstruction) [] do
+    createCmd allocationChangeInstruction
+  let dvp = Dvp with
+        masterAgreement
+        tradeId
+        buyer = parties.bob
+        status = SettlementStatus_Instructed
+        settlementDate = None
+        payments = []
+        deliveries = [delivererDeposit.asset]
+        observers = Set.empty
+  let custodialDvp = CustodialDvp with
+        dvp
+        endBuyer = parties.david
+        endSeller = parties.charlie
+  custodialDvpCid <- submitMulti (signatory custodialDvp) [] do createCmd custodialDvp
+  let custodialDvpSettlementRule = CustodialDvpSettlementRule with masterAgreement
+  custodialDvpSettlementRuleCid <- submitMulti (signatory custodialDvpSettlementRule) [] do
+    createCmd custodialDvpSettlementRule
+  let deliveryInstruction = CustodialTransfer with
+        allocationChangeCid
+        settlementCid = None
+  submit parties.bob do
+    exerciseCmd custodialDvpSettlementRuleCid CustodialDvpSettlementRule_Process with
+      custodialDvpCid
+      paymentInstructionCids = []
+      deliveryInstructionCids = [deliveryInstruction]
+      ctrl = parties.bob
+  pure ()
