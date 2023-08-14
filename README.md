@@ -23,6 +23,11 @@ level which is vital to preserving the privacy of custodians and their customers
 
 ## Project objectives
 
+Please note that this project is an example of how to model custodial account hierarchies in Daml and is not intended
+for production applications. It currently has a dependency on a pre-release version of the Daml Finance library. For
+more up to date information on modelling account hierarchies in Daml, please refer to the
+[Daml Finance documentation](https://docs.daml.com/daml-finance/index.html).
+
 This project is showcase of research and development carried out by the
 [Synfini](https://www2.asx.com.au/connectivity-and-data/dlt-as-a-service) team. It provides a a generic Daml
 library to model a register of assets, enabling multi-party workflows between custodians. It extends the existing
