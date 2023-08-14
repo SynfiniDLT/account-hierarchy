@@ -28,7 +28,7 @@ applications. It currently has a dependency on a pre-release version of the Daml
 more up to date information on modelling account hierarchies in Daml, please refer to the
 [Daml Finance documentation](https://docs.daml.com/daml-finance/index.html).
 
-The codebase was developed though research and development at
+The codebase was developed through research and development at
 [Synfini](https://www2.asx.com.au/connectivity-and-data/dlt-as-a-service). It provides a a generic Daml
 library to model a register of assets, enabling multi-party workflows between custodians. It extends the existing
 [FinLib](https://github.com/digital-asset/lib-finance) library to support multi-level account hierarchies. The core
